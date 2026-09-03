@@ -1,5 +1,4 @@
-gradio
-spaces
+numpy
 torch
 transformers
 huggingface_hub
