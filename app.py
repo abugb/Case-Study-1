@@ -1,6 +1,8 @@
 import gradio as gr
 import spaces
 import torch
+from huggingface_hub import InferenceClient
+from transformers import pipeline
 
 zero = torch.Tensor([0]).cuda()
 print(zero.device) # <-- 'cpu' 🤔
