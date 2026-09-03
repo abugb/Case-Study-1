@@ -4,9 +4,11 @@ import torch
 from huggingface_hub import InferenceClient
 from transformers import pipeline
 
+passrint("Hello")
 
 REMOTE_MODEL = "Qwen/Qwen-3.8-27B"
 LOCAL_MODEL = "Qwen/Qwen3-0.6B"
+
 zero = torch.Tensor([0]).cuda()
 print(zero.device) # <-- 'cpu' 🤔
 
