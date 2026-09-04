@@ -20,6 +20,7 @@ import numpy as np
 from huggingface_hub import InferenceClient
 from transformers import pipeline
 
+import os
 import base64
 from io import BytesIO
 from PIL import Image
@@ -63,7 +64,6 @@ def process_drawing(
     sketch,
     prompt="What did I draw? Describe the drawing and guess what it is.",
     use_local_model=False,
-    hf_token: gr.OAuthToken = None,
 ):
     if use_local_model:
         # Run local generation on ZeroGPU
@@ -73,9 +73,10 @@ def process_drawing(
         ]
         return f"[{LOCAL_MODEL} (Local ZeroGPU)]: " + local_generate(messages)
 
-    # Check if user has authenticated via Hugging Face OAuth for remote model
-    if hf_token is None or not getattr(hf_token, "token", None):
-        return "⚠️ Please log in with your Hugging Face account first using the button in the sidebar."
+    # Use Space Secret HF_TOKEN for remote model
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        return "⚠️ HF_TOKEN secret not found! Please add a secret named 'HF_TOKEN' in Space Settings -> Variables and secrets."
 
     if sketch is None or sketch.get("composite") is None:
         return "Please draw something on the canvas first!"
@@ -83,28 +84,30 @@ def process_drawing(
     img = sketch["composite"]
     data_url = image_to_data_url(img)
     
-    # Instantiate InferenceClient with the authenticated user's token
-    client = InferenceClient(
-        token=hf_token.token,
-        model=REMOTE_MODEL,
-    )
+    try:
+        client = InferenceClient(
+            token=token,
+            model=REMOTE_MODEL,
+        )
 
-    response = client.chat.completions.create(
-        model=REMOTE_MODEL,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
-            }
-        ],
-        max_tokens=512,
-    )
-    return response.choices[0].message.content
+        response = client.chat.completions.create(
+            model=REMOTE_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                }
+            ],
+            max_tokens=512,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"⚠️ Inference API Error: {e}\n\nPlease verify that your HF_TOKEN has 'Make calls to the serverless Inference API' permission."
 
-interface = gr.Interface(
+demo = gr.Interface(
     fn=process_drawing, 
     inputs=[
         gr.Sketchpad(type="pil", label="Draw something"),
@@ -115,12 +118,6 @@ interface = gr.Interface(
     title="Drawing Guessing with Qwen3.8-27B",
     description="Draw an object on the sketchpad and prompt the remote model to identify it!",
 )
-
-with gr.Blocks() as demo:
-    with gr.Sidebar():
-        gr.LoginButton()
-    
-    interface.render()
 
 if __name__ == "__main__":
     demo.launch()
