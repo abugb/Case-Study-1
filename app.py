@@ -62,9 +62,9 @@ def image_to_data_url(image):
 # Send drawing and prompt to remote model or local model
 def process_drawing(
     sketch,
-    prompt="What did I draw? Describe the drawing and guess what it is.",
     use_local_model=False,
 ):
+    prompt = "What did I draw? Return only the guess."
     if use_local_model:
         if sketch is None or sketch.get("composite") is None:
             return "Please draw something on the canvas first!"
@@ -121,7 +121,6 @@ demo = gr.Interface(
     fn=process_drawing, 
     inputs=[
         gr.Sketchpad(type="pil", label="Draw something"),
-        gr.Textbox(label="Prompt for AI", value="What did I draw? Describe the drawing and guess what it is."),
         gr.Checkbox(label="Use Local Model", value=False),
     ], 
     outputs=gr.Textbox(label="AI Response"),
