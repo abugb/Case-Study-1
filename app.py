@@ -66,10 +66,20 @@ def process_drawing(
     use_local_model=False,
 ):
     if use_local_model:
+        if sketch is None or sketch.get("composite") is None:
+            return "Please draw something on the canvas first!"
+        img = sketch["composite"]
+        
         # Run local generation on ZeroGPU
         messages = [
-            {"role": "system", "content": "You are a helpful AI assistant analyzing drawing descriptions."},
-            {"role": "user", "content": prompt},
+            {"role": "system", "content": "You are a helpful AI assistant analyzing drawings."},
+            {
+                "role": "user", 
+                "content": [
+                    {"type": "image", "image": img},
+                    {"type": "text", "text": prompt}
+                ]
+            }
         ]
         return f"[{LOCAL_MODEL} (Local ZeroGPU)]: " + local_generate(messages)
 
