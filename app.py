@@ -1,3 +1,18 @@
+import asyncio.base_events as _base_events
+
+def _patch_asyncio_event_loop_del():
+    original_del = getattr(_base_events.BaseEventLoop, "__del__", None)
+    def patched_del(self):
+        try:
+            if original_del:
+                original_del(self)
+        except ValueError as e:
+            if str(e) != "Invalid file descriptor: -1":
+                raise e
+    _base_events.BaseEventLoop.__del__ = patched_del
+
+_patch_asyncio_event_loop_del()
+
 import gradio as gr
 import spaces
 import torch
