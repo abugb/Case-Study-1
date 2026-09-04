@@ -27,6 +27,29 @@ from PIL import Image
 REMOTE_MODEL = "Qwen/Qwen3.8-27B"
 LOCAL_MODEL = "Qwen/Qwen3-0.6B"
 
+pipe = pipeline(
+    "text-generation",
+    model=LOCAL_MODEL,
+    dtype="auto",
+    device="cuda",
+)
+
+@spaces.GPU
+def local_generate(
+    messages,
+    max_tokens=512,
+    temperature=0.7,
+    top_p=0.95,
+):
+    outputs = pipe(
+        messages,
+        max_new_tokens=max_tokens,
+        do_sample=True,
+        temperature=temperature,
+        top_p=top_p,
+    )
+    return outputs[0]["generated_text"][-1]["content"]
+
 def image_to_data_url(image):
     if not isinstance(image, Image.Image):
         image = Image.fromarray(image.astype("uint8"))
@@ -35,13 +58,22 @@ def image_to_data_url(image):
     b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
     return f"data:image/png;base64,{b64}"
 
-# Send drawing and prompt to remote model
+# Send drawing and prompt to remote model or local model
 def process_drawing(
     sketch,
     prompt="What did I draw? Describe the drawing and guess what it is.",
+    use_local_model=False,
     hf_token: gr.OAuthToken = None,
 ):
-    # Check if user has authenticated via Hugging Face OAuth
+    if use_local_model:
+        # Run local generation on ZeroGPU
+        messages = [
+            {"role": "system", "content": "You are a helpful AI assistant analyzing drawing descriptions."},
+            {"role": "user", "content": prompt},
+        ]
+        return f"[{LOCAL_MODEL} (Local ZeroGPU)]: " + local_generate(messages)
+
+    # Check if user has authenticated via Hugging Face OAuth for remote model
     if hf_token is None or not getattr(hf_token, "token", None):
         return "⚠️ Please log in with your Hugging Face account first using the button in the sidebar."
 
@@ -77,6 +109,7 @@ interface = gr.Interface(
     inputs=[
         gr.Sketchpad(type="pil", label="Draw something"),
         gr.Textbox(label="Prompt for AI", value="What did I draw? Describe the drawing and guess what it is."),
+        gr.Checkbox(label="Use Local Model", value=False),
     ], 
     outputs=gr.Textbox(label="AI Response"),
     title="Drawing Guessing with Qwen3.8-27B",
