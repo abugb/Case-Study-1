@@ -12,16 +12,6 @@ from PIL import Image
 REMOTE_MODEL = "Qwen/Qwen3.8-27B"
 LOCAL_MODEL = "Qwen/Qwen3-0.6B"
 
-client = InferenceClient()
-
-zero = torch.Tensor([0]).cuda()
-print(zero.device) # <-- 'cpu' 🤔
-
-@spaces.GPU
-def greet(n):
-    print(zero.device) # <-- 'cuda:0' 🤗
-    return f"Hello {zero + n} Tensor"
-
 def image_to_data_url(image):
     if not isinstance(image, Image.Image):
         image = Image.fromarray(image.astype("uint8"))
@@ -31,13 +21,27 @@ def image_to_data_url(image):
     return f"data:image/png;base64,{b64}"
 
 # Send drawing and prompt to remote model
-def process_drawing(sketch, prompt="What did I draw? Describe the drawing and guess what it is."):
+def process_drawing(
+    sketch,
+    prompt="What did I draw? Describe the drawing and guess what it is.",
+    hf_token: gr.OAuthToken = None,
+):
+    # Check if user has authenticated via Hugging Face OAuth
+    if hf_token is None or not getattr(hf_token, "token", None):
+        return "⚠️ Please log in with your Hugging Face account first using the button in the sidebar."
+
     if sketch is None or sketch.get("composite") is None:
         return "Please draw something on the canvas first!"
     
     img = sketch["composite"]
     data_url = image_to_data_url(img)
     
+    # Instantiate InferenceClient with the authenticated user's token
+    client = InferenceClient(
+        token=hf_token.token,
+        model=REMOTE_MODEL,
+    )
+
     response = client.chat.completions.create(
         model=REMOTE_MODEL,
         messages=[
@@ -53,7 +57,7 @@ def process_drawing(sketch, prompt="What did I draw? Describe the drawing and gu
     )
     return response.choices[0].message.content
 
-demo = gr.Interface(
+interface = gr.Interface(
     fn=process_drawing, 
     inputs=[
         gr.Sketchpad(type="pil", label="Draw something"),
@@ -64,6 +68,11 @@ demo = gr.Interface(
     description="Draw an object on the sketchpad and prompt the remote model to identify it!",
 )
 
-demo.launch()
+with gr.Blocks() as demo:
+    with gr.Sidebar():
+        gr.LoginButton()
+    
+    interface.render()
 
-#plan - prompt user with object, use labels to fine-tune LLM, store on hf/gh
+if __name__ == "__main__":
+    demo.launch()
