@@ -38,7 +38,7 @@ pipe = pipeline(
 @spaces.GPU
 def local_generate(
     messages,
-    max_tokens=512,
+    max_tokens=1024,
     temperature=0.7,
     top_p=0.95,
 ):
@@ -166,7 +166,7 @@ def process_drawing(
                     ],
                 }
             ],
-            max_tokens=512,
+            max_tokens=1024,
         )
 
         choice = response.choices[0]
