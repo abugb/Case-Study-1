@@ -1,4 +1,7 @@
 numpy
 torch
+torchvision
 transformers
 huggingface_hub
+qwen-vl-utils
+accelerate
