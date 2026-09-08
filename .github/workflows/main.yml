@@ -14,3 +14,13 @@ jobs:
           github_repo_id: ${{ github.repository }}
           huggingface_repo_id: abugb/Case-Study-1
           hf_token: ${{ secrets.HF_TOKEN }}
+
+  notify-slack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: slackapi/slack-github-action@v2.1.1
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: ":rocket: `${{ github.actor }}` pushed to `${{ github.ref_name }}` in `${{ github.repository }}` (<${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|view commit>)."
