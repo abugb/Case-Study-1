@@ -1,8 +1,11 @@
-name: Sync With HuggingFace Space
+name: Sync With HuggingFace Space & Notify Discord
 
 on:
   push:
     branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   sync:
@@ -14,3 +17,18 @@ jobs:
           github_repo_id: ${{ github.repository }}
           huggingface_repo_id: abugb/Case-Study-1
           hf_token: ${{ secrets.HF_TOKEN }}
+
+  notify-discord:
+    needs: sync
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Discord notification
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          curl -H "Content-Type: application/json" \
+               -X POST \
+               -d '{
+                 "content": "🚀 `'"${{ github.actor }}"'` pushed to `'"${{ github.ref_name }}"'` in `'"${{ github.repository }}"'` ([view commit]('"${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"'))."
+               }' \
+               "$DISCORD_WEBHOOK"
