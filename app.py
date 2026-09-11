@@ -1,5 +1,6 @@
 import asyncio.base_events as _base_events
 
+# added by AI when debugging
 def _patch_asyncio_event_loop_del():
     original_del = getattr(_base_events.BaseEventLoop, "__del__", None)
     def patched_del(self):
@@ -25,8 +26,8 @@ import base64
 from io import BytesIO
 from PIL import Image
 
-REMOTE_MODEL = "Qwen/Qwen3.8-27B"
-LOCAL_MODEL = "Qwen/Qwen2-VL-2B-Instruct"
+REMOTE_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
+LOCAL_MODEL = "Qwen/Qwen2-VL-7B-Instruct"
 
 pipe = pipeline(
     "image-text-to-text",
@@ -38,7 +39,7 @@ pipe = pipeline(
 @spaces.GPU
 def local_generate(
     messages,
-    max_tokens=1024,
+    max_tokens=4096,
     temperature=0.7,
     top_p=0.95,
 ):
@@ -51,7 +52,7 @@ def local_generate(
             top_p=top_p,
         )
         if not outputs:
-            return "⚠️ Model produced no output."
+            return "Model produced no output."
 
         gen = outputs[0]
         if isinstance(gen, dict):
@@ -130,7 +131,7 @@ def process_drawing(
     if use_local_model:
         # Run local generation on ZeroGPU
         messages = [
-            {"role": "system", "content": "You are a helpful AI assistant analyzing drawings."},
+            {"role": "system", "content": "What did I draw? Return only the guess."},
             {
                 "role": "user", 
                 "content": [
@@ -145,7 +146,7 @@ def process_drawing(
     # Use Space Secret HF_TOKEN for remote model
     token = os.environ.get("HF_TOKEN")
     if not token:
-        return "⚠️ HF_TOKEN secret not found! Please add a secret named 'HF_TOKEN' in Space Settings -> Variables and secrets."
+        return "HF_TOKEN not found"
 
     data_url = image_to_data_url(img)
 
@@ -166,7 +167,7 @@ def process_drawing(
                     ],
                 }
             ],
-            max_tokens=1024,
+            max_tokens=4096,
         )
 
         choice = response.choices[0]
