@@ -175,7 +175,7 @@ def local_generate_pipeline(sketch_img):
         s2_output = svd_pipe(
             resized_for_video,
             decode_chunk_size=4,
-            num_frames=14,
+            num_frames=21,
             generator=generator,
         )
         frames = s2_output.frames[0]
