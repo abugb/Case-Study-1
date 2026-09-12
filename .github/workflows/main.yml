@@ -3,6 +3,7 @@ name: Sync With HuggingFace Space & Notify Discord
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,24 +12,67 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
       - uses: huggingface/hub-sync@v0.3.0
         with:
           github_repo_id: ${{ github.repository }}
           huggingface_repo_id: abugb/Case-Study-1
           hf_token: ${{ secrets.HF_TOKEN }}
 
-  notify-discord:
+  test-on-huggingface:
     needs: sync
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest gradio_client huggingface_hub pillow
+
+      - name: Run Hugging Face Space E2E Tests (ZeroGPU)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: abugb/Case-Study-1
+          SPACE_TIMEOUT: "600"
+        run: |
+          python -m pytest -v tests/test_space_e2e.py
+
+  notify-discord:
+    needs: [sync, test-on-huggingface]
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Send Discord notification
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
+          if [ "${{ needs.sync.result }}" = "success" ] && [ "${{ needs.test-on-huggingface.result }}" = "success" ]; then
+            STATUS_MSG="🚀 **Deployment & ZeroGPU E2E Tests Succeeded!**"
+          else
+            STATUS_MSG="⚠️ **Deployment or Test Alert**"
+          fi
+
+          PAYLOAD=$(jq -n \
+            --arg title "$STATUS_MSG" \
+            --arg actor "${{ github.actor }}" \
+            --arg ref "${{ github.ref_name }}" \
+            --arg repo "${{ github.repository }}" \
+            --arg commit_url "${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}" \
+            --arg sha "${{ github.sha }}" \
+            --arg sync_res "${{ needs.sync.result }}" \
+            --arg test_res "${{ needs.test-on-huggingface.result }}" \
+            '{content: "\($title)\n• **Actor**: `\($actor)`\n• **Branch**: `\($ref)`\n• **Commit**: [\($sha[:7])](\($commit_url))\n• **Sync**: `\($sync_res)`\n• **ZeroGPU E2E Tests**: `\($test_res)`\n• **Space**: https://huggingface.co/spaces/abugb/Case-Study-1"}'
+          )
+
           curl -H "Content-Type: application/json" \
                -X POST \
-               -d '{
-                 "content": "🚀 `'"${{ github.actor }}"'` pushed to `'"${{ github.ref_name }}"'` in `'"${{ github.repository }}"'` ([view commit]('"${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"'))."
-               }' \
+               -d "$PAYLOAD" \
                "$DISCORD_WEBHOOK"
