@@ -1,3 +1,4 @@
+# tests written by AI
 import os
 import time
 import tempfile
@@ -91,41 +92,43 @@ def sample_sketch():
 
 class TestSpaceE2E:
     def test_space_empty_sketchpad(self, hf_client):
-        """Empty sketchpad payload should return 'Sketchpad is empty'."""
+        """Empty sketchpad payload should return None, None, 'Sketchpad is empty'."""
         empty_payload = {"background": None, "layers": [], "composite": None}
         response = hf_client.predict(
             sketch=empty_payload,
             use_local_model=False,
             api_name="/process_drawing",
         )
-        assert response == "Sketchpad is empty"
+        img, video, status = response
+        assert img is None
+        assert video is None
+        assert status == "Sketchpad is empty"
 
     def test_space_remote_model(self, hf_client, sample_sketch):
-        """Test remote serverless inference (Qwen/Qwen2.5-VL-72B-Instruct)."""
+        """Test remote serverless inference."""
         response = hf_client.predict(
             sketch=sample_sketch,
             use_local_model=False,
             api_name="/process_drawing",
         )
         print(f"\nRemote Model Response: {response}")
-        assert isinstance(response, str)
-        assert response.strip(), "Remote model returned an empty string"
-        assert "HF_TOKEN not found" not in response
-        assert "Failed to connect to inference API" not in response
-        assert "Sketchpad is empty" not in response
-        assert "Remote model returned an empty response" not in response
+        img, video, status = response
+        assert "HF_TOKEN not found" not in status
+        assert "Sketchpad is empty" not in status
+        assert "Failed to connect to inference API" not in status
 
     def test_space_local_model_zerogpu(self, hf_client, sample_sketch):
-        """Test local ZeroGPU inference (Qwen/Qwen2-VL-7B-Instruct)."""
+        """Test local ZeroGPU two-stage diffusion pipeline."""
         response = hf_client.predict(
             sketch=sample_sketch,
             use_local_model=True,
             api_name="/process_drawing",
         )
         print(f"\nZeroGPU Local Model Response: {response}")
-        assert isinstance(response, str)
-        assert response.strip(), "Local model returned an empty string"
-        assert not response.startswith("⚠️ Local Model Error"), f"ZeroGPU model error: {response}"
-        assert response != "Model produced no output."
-        assert "Sketchpad is empty" not in response
+        img, video, status = response
+        assert not status.startswith("⚠️ Local Model Error"), f"ZeroGPU model error: {status}"
+        assert "Sketchpad is empty" not in status
+        assert img is not None
+        assert video is not None
+
 

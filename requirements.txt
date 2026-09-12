@@ -3,5 +3,8 @@ torch
 torchvision
 transformers
 huggingface_hub
-qwen-vl-utils
 accelerate
+diffusers>=0.30.0
+imageio
+imageio-ffmpeg
+pillow
