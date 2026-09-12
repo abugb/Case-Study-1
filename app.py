@@ -1,22 +1,5 @@
-import asyncio.base_events as _base_events
-
-# added by AI when debugging
-def _patch_asyncio_event_loop_del():
-    original_del = getattr(_base_events.BaseEventLoop, "__del__", None)
-    def patched_del(self):
-        try:
-            if original_del:
-                original_del(self)
-        except ValueError as e:
-            if str(e) != "Invalid file descriptor: -1":
-                raise e
-    _base_events.BaseEventLoop.__del__ = patched_del
-
-_patch_asyncio_event_loop_del()
-
 import gradio as gr
 import spaces
-import torch
 import numpy as np
 from huggingface_hub import InferenceClient
 from transformers import pipeline
@@ -51,6 +34,19 @@ def local_generate(
             temperature=temperature,
             top_p=top_p,
         )
+        print("=== [TEST 2: LOCAL PIPELINE OUTPUT] ===")
+        print(f"outputs type: {type(outputs)}")
+        print(f"outputs[0] keys: {list(outputs[0].keys()) if outputs and isinstance(outputs[0], dict) else None}")
+        if outputs and isinstance(outputs[0], dict) and "generated_text" in outputs[0]:
+            gt = outputs[0]["generated_text"]
+            print(f"generated_text type: {type(gt)}")
+            if isinstance(gt, list):
+                print(f"generated_text length: {len(gt)}")
+                print(f"last element: {gt[-1]}")
+                if isinstance(gt[-1], dict):
+                    print(f"direct content access: {repr(gt[-1].get('content'))}")
+        print("=======================================")
+
         if not outputs:
             return "Model produced no output."
 
@@ -68,14 +64,10 @@ def local_generate(
                         text = "".join(part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text")
                         if text.strip():
                             return text.strip()
-            if gen and isinstance(gen[-1], dict) and "content" in gen[-1]:
-                res = str(gen[-1]["content"]).strip()
-                if res:
-                    return res
-            return str(gen).strip()
+            return "Model returned an empty response."
         elif isinstance(gen, str):
             res = gen.strip()
-            return res if res else "⚠️ Model returned an empty response."
+            return res if res else "Model returned an empty response."
         else:
             return str(gen).strip()
     except Exception as e:
@@ -123,7 +115,17 @@ def process_drawing(
     sketch,
     use_local_model=False,
 ):
-    prompt = "What did I draw? Return only the guess."
+    print("=== [TEST 1: GRADIO SKETCHPAD PAYLOAD] ===")
+    print(f"sketch type: {type(sketch)}")
+    if isinstance(sketch, dict):
+        print(f"sketch keys: {list(sketch.keys())}")
+        comp = sketch.get("composite")
+        print(f"composite type: {type(comp)}")
+        if comp is not None:
+            print(f"composite mode: {getattr(comp, 'mode', None)}, size: {getattr(comp, 'size', None)}")
+    print("==========================================")
+
+    prompt = "What object did I draw? Return only the guess."
     img = extract_and_prepare_image(sketch)
     if img is None:
         return "Sketchpad is empty"
@@ -131,7 +133,7 @@ def process_drawing(
     if use_local_model:
         # Run local generation on ZeroGPU
         messages = [
-            {"role": "system", "content": "What did I draw? Return only the guess."},
+            {"role": "system", "content": "What object did I draw? Return only the guess."},
             {
                 "role": "user", 
                 "content": [
@@ -141,7 +143,7 @@ def process_drawing(
             }
         ]
         result = local_generate(messages)
-        return f"[{LOCAL_MODEL} (Local ZeroGPU)]: {result}"
+        return result
 
     # Use Space Secret HF_TOKEN for remote model
     token = os.environ.get("HF_TOKEN")
@@ -171,16 +173,23 @@ def process_drawing(
         )
 
         choice = response.choices[0]
-        content = choice.message.content
-        if not content and hasattr(choice.message, "reasoning_content") and choice.message.reasoning_content:
-            content = choice.message.reasoning_content
+        print("=== [TEST 3: REMOTE MODEL RESPONSE] ===")
+        print(f"message object: {choice.message}")
+        print(f"content: {repr(choice.message.content)}")
+        print(f"has reasoning_content: {hasattr(choice.message, 'reasoning_content')}")
+        if hasattr(choice.message, "reasoning_content"):
+            print(f"reasoning_content: {repr(choice.message.reasoning_content)}")
+        print(f"finish_reason: {getattr(choice, 'finish_reason', None)}")
+        print("=======================================")
+
+        content = choice.message.content or getattr(choice.message, "reasoning_content", "")
 
         if not content or not content.strip():
-            return f"⚠️ Remote model returned an empty response. (Finish reason: {getattr(choice, 'finish_reason', 'unknown')})"
+            return f"Remote model returned an empty response. (Finish reason: {getattr(choice, 'finish_reason', 'unknown')})"
 
         return content.strip()
     except Exception as e:
-        return f"⚠️ Inference API Error: {e}\n\nPlease verify that your HF_TOKEN has 'Make calls to the serverless Inference API' permission."
+        return f"Failed to connect to inference API"
 
 demo = gr.Interface(
     fn=process_drawing, 
@@ -188,7 +197,7 @@ demo = gr.Interface(
         gr.Sketchpad(type="pil", label="Draw something"),
         gr.Checkbox(label="Use Local Model", value=False),
     ], 
-    outputs=gr.Textbox(label="AI Response"),
+    outputs=gr.Textbox(label="LLM's Guess'"),
     title="LLM Guess the Drawing",
     description="Draw an object on the sketchpad, then prompt the model to identify it!",
 )
