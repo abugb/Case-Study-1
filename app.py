@@ -55,11 +55,11 @@ REMOTE_VIDEO_MODEL = "stabilityai/stable-video-diffusion-img2vid-xt"
 
 # Internal system prompts - not exposed as user inputs in the UI
 SYSTEM_PROMPT = (
-    "A beautiful, highly detailed, vibrant photorealistic scene based on this sketch, "
-    "8k resolution, cinematic lighting, masterpiece"
+    "A Playful animation based on this character performing an everyday action"
+    "familiar setting, bright lighting, iterpretable"
 )
 SYSTEM_NEGATIVE_PROMPT = (
-    "blurry, low quality, distorted, deformed, disfigured, bad anatomy, artifacts"
+    "blurry, static, distorted, deformed, disfigured, bad anatomy, artifacts, uneventful"
 )
 
 # Global pipeline caches for ZeroGPU execution
