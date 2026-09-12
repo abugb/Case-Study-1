@@ -53,13 +53,15 @@ SVD_MODEL = "stabilityai/stable-video-diffusion-img2vid-xt"
 REMOTE_IMAGE_MODEL = "stabilityai/stable-diffusion-xl-base-1.0"
 REMOTE_VIDEO_MODEL = "stabilityai/stable-video-diffusion-img2vid-xt"
 
-# Internal system prompts - not exposed as user inputs in the UI
+# Internal system prompts - directs the model to create a realistic human inspired by the sketch
 SYSTEM_PROMPT = (
-    "A Playful animation based on this character performing an everyday action"
-    "familiar setting, bright lighting, iterpretable"
+    "A highly detailed photorealistic portrait of a human person inspired by this sketch, "
+    "natural human anatomy, expressive facial features, realistic skin texture and hair, "
+    "everyday clothing, familiar realistic setting, bright warm lighting, 8k resolution, masterpiece"
 )
 SYSTEM_NEGATIVE_PROMPT = (
-    "blurry, static, distorted, deformed, disfigured, bad anatomy, artifacts, uneventful"
+    "blurry, low quality, distorted, deformed, disfigured, bad anatomy, extra limbs, "
+    "missing fingers, unnatural body proportions, cartoon, anime, 3d render, doll, alien, animal"
 )
 
 # Global pipeline caches for ZeroGPU execution
@@ -257,11 +259,11 @@ demo = gr.Interface(
         gr.Video(label="Generated Video (Image-to-Video)"),
         gr.Textbox(label="Status"),
     ],
-    title="Sketch-to-Video AI Studio",
+    title="Sketch-to-Human AI Studio",
     description=(
-        "Draw a sketch on the canvas and submit! The pipeline first transforms your sketch "
-        "into a photorealistic image using a modern diffusion ControlNet model, and then "
-        "animates the generated image into a video using an Image-to-Video (I2V) model.\n\n"
+        "Draw a sketch on the canvas and submit! The pipeline transforms your drawing "
+        "into a photorealistic human person inspired by the sketch using ControlNet diffusion, and then "
+        "animates the character into a video using Stable Video Diffusion.\n\n"
         "💡 **Tip**: Leave **'Use Local Model (ZeroGPU)'** checked to execute the full pipeline "
         "directly on Hugging Face ZeroGPU hardware."
     ),
