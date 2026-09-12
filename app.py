@@ -226,7 +226,13 @@ def remote_generate_pipeline(sketch_img):
 
         return gen_img, temp_video.name, "Success: Generated image & animated video via Remote API!"
     except Exception as e:
-        return None, None, f"Failed to connect to inference API: {e}"
+        return (
+            None,
+            None,
+            f"Failed to connect to inference API: {e}. "
+            "Note: Hugging Face free Serverless API does not host image-to-image/video diffusion models. "
+            "Please check 'Use Local Model (ZeroGPU)' to run the pipeline on the Space's GPU hardware.",
+        )
 
 
 def process_drawing(sketch, use_local_model=True):
@@ -255,7 +261,9 @@ demo = gr.Interface(
     description=(
         "Draw a sketch on the canvas and submit! The pipeline first transforms your sketch "
         "into a photorealistic image using a modern diffusion ControlNet model, and then "
-        "animates the generated image into a video using an Image-to-Video (I2V) model."
+        "animates the generated image into a video using an Image-to-Video (I2V) model.\n\n"
+        "💡 **Tip**: Leave **'Use Local Model (ZeroGPU)'** checked to execute the full pipeline "
+        "directly on Hugging Face ZeroGPU hardware."
     ),
 )
 
