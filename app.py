@@ -66,7 +66,7 @@ def process_drawing(
     use_local_model=False,
     incorrect_guesses=None,
 ):
-    base_prompt = "Analyze the given drawing in detail, then return only the primary subject depicted in the drawing."
+    base_prompt = "Analyze the given drawing in detail, then return only what the primary subject depicted in the drawing is."
     img = extract_and_prepare_image(sketch)
     if img is None:
         return "Sketchpad is empty"
@@ -94,7 +94,7 @@ def process_drawing(
             messages.append({
                 "role": "user",
                 "content": (
-                    f"Analyze the given drawing in detail, then return only the primary subject depicted in the drawing. The following answers are incorrect: {previous_list}."
+                    f"Analyze the given drawing in detail, then return only what the primary subject depicted in the drawing is. The following answers are incorrect: {previous_list}."
                 ),
             })
         return local_generate(messages)
