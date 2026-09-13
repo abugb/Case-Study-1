@@ -123,3 +123,11 @@ class TestGradioInterface:
         assert isinstance(demo, gr.Interface)
         assert len(demo.input_components) == 2
         assert len(demo.output_components) == 1
+
+    def test_sketchpad_brush_configuration(self):
+        """Validate that the sketchpad has color selection and color picker enabled."""
+        sketchpad = demo.input_components[0]
+        assert hasattr(sketchpad, "brush")
+        assert sketchpad.brush is not None
+        assert len(sketchpad.brush.colors) >= 5
+        assert sketchpad.brush.color_mode == "defaults"

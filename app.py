@@ -117,15 +117,37 @@ def process_drawing(
     except Exception as e:
         return "Failed to connect to inference API"
 
+# Configure brush with rich default color palette and custom color picker support
+brush = gr.Brush(
+    colors=[
+        "#000000",  # Black
+        "#e02424",  # Red
+        "#057a55",  # Green
+        "#1c64f2",  # Blue
+        "#e3a008",  # Yellow
+        "#d03801",  # Orange
+        "#9061f9",  # Purple
+        "#775034",  # Brown
+        "#e74694",  # Pink
+        "#ffffff",  # White
+    ],
+    default_color="#000000",
+    color_mode="defaults",
+)
+
 demo = gr.Interface(
     fn=process_drawing, 
     inputs=[
-        gr.Sketchpad(type="pil", label="Draw something"),
+        gr.Sketchpad(
+            type="pil",
+            label="Draw something",
+            brush=brush,
+        ),
         gr.Checkbox(label="Use Local Model", value=False),
     ], 
-    outputs=gr.Textbox(label="LLM's Guess"),
-    title="LLM Guess the Drawing",
-    description="Draw an object on the sketchpad, then prompt the model to identify it!",
+    outputs=gr.Textbox(label="VLM's Guess"),
+    title="VLM Guess the Drawing",
+    description="Draw an object on the sketchpad using any color, then prompt the model to identify it!",
 )
 
 if __name__ == "__main__":
