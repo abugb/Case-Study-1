@@ -86,7 +86,7 @@ def process_drawing(
     use_local_model=False,
     incorrect_guesses=None,
 ):
-    base_prompt = "Analyze the given drawing in detail, then return only the name of the primary subject depicted in the drawing."
+    base_prompt = "Analyze the intent and detail of the given drawing, then return only the name of the primary subject depicted in the drawing. Be specific and attend to the color(s) used."
     img = extract_and_prepare_image(sketch)
     if img is None:
         return "Sketchpad is empty"
