@@ -333,6 +333,11 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
         outputs=[guess_output, feedback_group, history_state, history_output, last_drawing_state],
     )
 
+    use_local_model.change(
+        fn=reset_round,
+        outputs=[guess_output, feedback_group, history_state, history_output, last_drawing_state],
+    )
+
     # Dedicated API endpoint for backward compatibility with E2E tests and client scripts
     api_btn = gr.Button(visible=False)
     api_btn.click(
