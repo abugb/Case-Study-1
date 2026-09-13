@@ -305,3 +305,15 @@ class TestGradioInterface:
         triggers = [t for _, target_list in sketchpad_events for t in target_list]
         assert "change" not in triggers
         assert "clear" in triggers
+
+class TestErrorResponses:
+    def test_is_error_response(self):
+        from app import is_error_response
+        assert is_error_response("Sketchpad is empty") is True
+        assert is_error_response("HF_TOKEN not found") is True
+        assert is_error_response("Failed to connect to inference API") is True
+        assert is_error_response("⚠️ Local Model Error: Out of memory") is True
+        
+        # Valid guesses should return False
+        assert is_error_response("A Cat") is False
+        assert is_error_response("The drawing is a Dog") is False

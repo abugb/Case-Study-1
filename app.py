@@ -8,8 +8,8 @@ import gradio as gr
 from transformers import pipeline
 from huggingface_hub import InferenceClient
 
-REMOTE_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
-LOCAL_MODEL = "Qwen/Qwen2-VL-7B-Instruct"
+REMOTE_MODEL = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+LOCAL_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 
 try:
     import spaces
@@ -67,6 +67,19 @@ def image_to_data_url(image):
     b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
     return f"data:image/png;base64,{b64}"
 
+def is_error_response(response):
+    return response in ("Sketchpad is empty", "HF_TOKEN not found", "Failed to connect to inference API") or response.startswith("⚠️")
+
+def append_incorrect_guesses(messages, base_prompt, incorrect_guesses):
+    for idx, prev_guess in enumerate(incorrect_guesses):
+        messages.append({"role": "assistant", "content": prev_guess})
+        previous_list = ", ".join(f'"{g}"' for g in incorrect_guesses[: idx + 1])
+        messages.append({
+            "role": "user",
+            "content": f"{base_prompt} The following answers are incorrect: {previous_list}."
+        })
+    return messages
+
 # Send drawing and prompt to remote model or local model
 def process_drawing(
     sketch,
@@ -78,10 +91,7 @@ def process_drawing(
     if img is None:
         return "Sketchpad is empty"
 
-    if isinstance(incorrect_guesses, str):
-        incorrect_guesses = [incorrect_guesses]
-    elif not incorrect_guesses:
-        incorrect_guesses = []
+    incorrect_guesses = incorrect_guesses or []
 
     if use_local_model:
         # Run local generation on ZeroGPU
@@ -95,15 +105,7 @@ def process_drawing(
                 ]
             }
         ]
-        for idx, prev_guess in enumerate(incorrect_guesses):
-            messages.append({"role": "assistant", "content": prev_guess})
-            previous_list = ", ".join(f'"{g}"' for g in incorrect_guesses[: idx + 1])
-            messages.append({
-                "role": "user",
-                "content": (
-                    f"Analyze the given drawing in detail, then return only the name of the primary subject depicted in the drawing. The following answers are incorrect: {previous_list}."
-                ),
-            })
+        messages = append_incorrect_guesses(messages, base_prompt, incorrect_guesses)
         return local_generate(messages)
 
     # Use Space Secret HF_TOKEN for remote model
@@ -128,15 +130,7 @@ def process_drawing(
                 ],
             }
         ]
-        for idx, prev_guess in enumerate(incorrect_guesses):
-            messages.append({"role": "assistant", "content": prev_guess})
-            previous_list = ", ".join(f'"{g}"' for g in incorrect_guesses[: idx + 1])
-            messages.append({
-                "role": "user",
-                "content": (
-                    f"Analyze the given drawing in detail, then return only the name of the primary subject depicted in the drawing. The following answers are incorrect: {previous_list}."
-                ),
-            })
+        messages = append_incorrect_guesses(messages, base_prompt, incorrect_guesses)
 
         response = client.chat.completions.create(
             model=REMOTE_MODEL,
@@ -178,19 +172,14 @@ def make_initial_guess(sketch, use_local_model, history=None, last_drawing=None)
     current_hash = get_drawing_hash(sketch)
     drawing_changed = (last_drawing is None or current_hash != last_drawing)
 
-    if drawing_changed:
-        incorrect_guesses = []
-        history_to_use = []
-    else:
-        incorrect_guesses = history if history else []
-        history_to_use = history if history else []
+    history_to_use = [] if drawing_changed else (history or [])
 
     guess = process_drawing(
         sketch,
         use_local_model=use_local_model,
-        incorrect_guesses=incorrect_guesses,
+        incorrect_guesses=history_to_use,
     )
-    if guess in ("Sketchpad is empty", "HF_TOKEN not found", "Failed to connect to inference API") or guess.startswith("⚠️"):
+    if is_error_response(guess):
         return (
             guess,
             gr.update(visible=False),
@@ -236,7 +225,6 @@ def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None):
     drawing_changed = (last_drawing is None or current_hash != last_drawing)
 
     if drawing_changed:
-        incorrect_guesses = []
         history_to_use = []
     else:
         if not history:
@@ -247,15 +235,15 @@ def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None):
                 "",
                 current_hash,
             )
-        incorrect_guesses = history
         history_to_use = history
 
     new_guess = process_drawing(
         sketch,
         use_local_model=use_local_model,
-        incorrect_guesses=incorrect_guesses,
+        incorrect_guesses=history_to_use,
     )
-    if new_guess in ("Sketchpad is empty", "HF_TOKEN not found", "Failed to connect to inference API") or new_guess.startswith("⚠️"):
+    
+    if is_error_response(new_guess):
         return (
             new_guess,
             gr.update(visible=True if history_to_use else False),
