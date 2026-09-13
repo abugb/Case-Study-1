@@ -11,15 +11,19 @@ pinned: false
 short_description: Interface where an LLM guesses your drawing
 ---
 
-# LLM Guess the Drawing — Case Study 1
+# VLM Guess the Drawing — Case Study 1
 
-An interactive AI application hosted on [Hugging Face Spaces](https://huggingface.co/spaces/abugb/Case-Study-1) that challenges Vision-Language Models (VLMs) to identify drawings created on a digital sketchpad.
+An interactive AI application hosted on [Hugging Face Spaces](https://huggingface.co/spaces/abugb/Case-Study-1) that challenges Vision-Language Models (VLMs) to identify drawings created on a digital sketchpad, featuring an interactive feedback loop with automatic retries when a guess is incorrect.
 
 ---
 
 ## Features
 
 - **Interactive Canvas**: Draw any object or shape on the embedded Gradio sketchpad with a 10-color default palette and full custom color picker support.
+- **Interactive Feedback & Retry Loop**:
+  - Indicate whether the VLM's guess is **Correct** or **Incorrect**.
+  - If marked incorrect, the VLM receives multi-turn conversational context with previous incorrect guesses excluded, prompting it to supply an alternate prediction.
+  - Live guess history timeline displaying past attempts with strike-throughs and status tags.
 - **Dual Execution Modes**:
   - **Remote Serverless Inference (Default)**: Leverages Hugging Face's serverless Inference API with `Qwen/Qwen2.5-VL-72B-Instruct` for zero-latency, high-accuracy guessing.
   - **Local ZeroGPU Inference**: Executes `Qwen/Qwen2-VL-7B-Instruct` directly on the Space's dynamic ZeroGPU hardware using `@spaces.GPU` and Hugging Face `transformers`.
@@ -31,13 +35,17 @@ An interactive AI application hosted on [Hugging Face Spaces](https://huggingfac
 ## Architecture Overview
 
 ```mermaid
-flowchart LR
+flowchart TD
     A["Interactive Sketchpad"] --> B["extract_and_prepare_image"]
     B --> C{"Execution Mode"}
     C -->|"Remote (Default)"| D["Qwen/Qwen2.5-VL-72B-Instruct<br/>(HF InferenceClient)"]
     C -->|"Local ZeroGPU"| E["Qwen/Qwen2-VL-7B-Instruct<br/>(transformers.pipeline on ZeroGPU)"]
-    D --> F["LLM's Guess"]
+    D --> F["VLM Guess & Feedback Controls"]
     E --> F
+    F --> G{"User Feedback"}
+    G -->|"✅ Correct"| H["Celebration & Round Won"]
+    G -->|"❌ Incorrect (Guess Again)"| I["Append to incorrect_guesses & Retrigger Inference"]
+    I --> C
 ```
 
 ---
