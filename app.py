@@ -66,7 +66,7 @@ def process_drawing(
     use_local_model=False,
     incorrect_guesses=None,
 ):
-    base_prompt = "Analyze the given drawing in detail, then return only what thing is in the drawing."
+    base_prompt = "Analyze the given drawing in detail, then return only the primary subject depicted in the drawing."
     img = extract_and_prepare_image(sketch)
     if img is None:
         return "Sketchpad is empty"
@@ -94,8 +94,7 @@ def process_drawing(
             messages.append({
                 "role": "user",
                 "content": (
-                    f"'{prev_guess}' is incorrect. The following guess(es) were already wrong: {previous_list}. "
-                    "Please re-examine the drawing carefully and provide a different guess. Return only what thing is in the drawing."
+                    f"Analyze the given drawing in detail, then return only the primary subject depicted in the drawing. The following answers are incorrect: {previous_list}."
                 ),
             })
         return local_generate(messages)
@@ -148,30 +147,22 @@ def process_drawing(
 def format_history_markdown(history, correct=False):
     if not history:
         return ""
-    lines = ["### 📜 Guess History"]
+    lines = ["### Guess History"]
     for i, guess in enumerate(history, 1):
-        if correct and i == len(history):
-            lines.append(f"{i}. **{guess}** ✅ *(Correct!)*")
-        elif i < len(history) or (not correct and len(history) > 1):
-            lines.append(f"{i}. ~~{guess}~~ ❌ *(Incorrect)*")
+        if i == len(history):
+            if correct:
+                lines.append(f"{i}. **{guess}** (Correct!)")
+            else:
+                lines.append(f"{i}. **{guess}** (Current Guess)")
         else:
-            lines.append(f"{i}. **{guess}** *(Current Guess)*")
+            lines.append(f"{i}. ~~{guess}~~ (Incorrect)")
     return "\n\n".join(lines)
 
 def make_initial_guess(sketch, use_local_model):
     guess = process_drawing(sketch, use_local_model=use_local_model, incorrect_guesses=[])
-    if guess == "Sketchpad is empty":
+    if guess in ("Sketchpad is empty", "HF_TOKEN not found", "Failed to connect to inference API") or guess.startswith("⚠️"):
         return (
             guess,
-            "⚠️ **The sketchpad is empty.** Please draw something before asking for a guess!",
-            gr.update(visible=False),
-            [],
-            "",
-        )
-    if guess in ("HF_TOKEN not found", "Failed to connect to inference API") or guess.startswith("⚠️"):
-        return (
-            guess,
-            f"⚠️ **Error:** {guess}",
             gr.update(visible=False),
             [],
             "",
@@ -180,7 +171,6 @@ def make_initial_guess(sketch, use_local_model):
     history = [guess]
     return (
         guess,
-        f"🤔 The VLM guessed: **{guess}**. Was this guess correct?",
         gr.update(visible=True),
         history,
         format_history_markdown(history, correct=False),
@@ -189,17 +179,11 @@ def make_initial_guess(sketch, use_local_model):
 def handle_correct(history):
     if not history:
         return (
-            "Draw something and click **Guess Drawing** first!",
             gr.update(visible=False),
             [],
             "",
         )
-    winning_guess = history[-1]
-    round_count = len(history)
-    attempt_str = "attempt" if round_count == 1 else "attempts"
-    status = f"🎉 **Spot on!** The VLM correctly guessed **{winning_guess}** in {round_count} {attempt_str}!"
     return (
-        status,
         gr.update(visible=False),
         history,
         format_history_markdown(history, correct=True),
@@ -209,7 +193,6 @@ def handle_incorrect(sketch, use_local_model, history):
     if not history:
         return (
             "",
-            "Please make an initial guess first.",
             gr.update(visible=False),
             [],
             "",
@@ -222,17 +205,14 @@ def handle_incorrect(sketch, use_local_model, history):
     if new_guess in ("Sketchpad is empty", "HF_TOKEN not found", "Failed to connect to inference API") or new_guess.startswith("⚠️"):
         return (
             new_guess,
-            f"⚠️ **Error while fetching new guess:** {new_guess}",
             gr.update(visible=True),
             history,
             format_history_markdown(history, correct=False),
         )
 
     new_history = history + [new_guess]
-    status = f"🔄 Previous guess was marked incorrect. New guess (#{len(new_history)}): **{new_guess}**. Was this correct?"
     return (
         new_guess,
-        status,
         gr.update(visible=True),
         new_history,
         format_history_markdown(new_history, correct=False),
@@ -241,7 +221,6 @@ def handle_incorrect(sketch, use_local_model, history):
 def reset_round():
     return (
         "",
-        "Draw an object on the sketchpad using any color, then prompt the model to identify it!",
         gr.update(visible=False),
         [],
         "",
@@ -256,9 +235,8 @@ brush = gr.Brush(
 with gr.Blocks(title="VLM Guess the Drawing") as demo:
     gr.Markdown(
         """
-        # 🎨 VLM Guess the Drawing
-        Draw an object on the sketchpad using any color, then prompt the model to identify it!
-        If the model's guess is incorrect, let it know and it will try another guess.
+        # VLM Guess the Drawing
+        Draw an object on the sketchpad, then prompt the model to identify it!
         """
     )
 
@@ -270,7 +248,7 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
                 brush=brush,
             )
             use_local_model = gr.Checkbox(label="Use Local Model", value=False)
-            guess_btn = gr.Button("🔍 Guess Drawing", variant="primary", size="lg")
+            guess_btn = gr.Button("Guess Drawing", variant="primary", size="lg")
 
         with gr.Column(scale=1):
             guess_output = gr.Textbox(
@@ -278,15 +256,10 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
                 placeholder="The model's guess will appear here...",
                 interactive=False,
             )
-            status_output = gr.Markdown(
-                "Draw an object on the sketchpad using any color, then prompt the model to identify it!"
-            )
 
-            with gr.Group(visible=False) as feedback_group:
-                gr.Markdown("### ❓ Was this guess correct?")
-                with gr.Row():
-                    correct_btn = gr.Button("✅ Correct!", variant="success", size="lg")
-                    incorrect_btn = gr.Button("❌ Incorrect (Guess Again)", variant="stop", size="lg")
+            with gr.Row(visible=False) as feedback_group:
+                correct_btn = gr.Button("Correct", variant="success", size="lg")
+                incorrect_btn = gr.Button("Incorrect (Guess Again)", variant="stop", size="lg")
 
             history_output = gr.Markdown(label="Guess History")
             history_state = gr.State([])
@@ -295,24 +268,24 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
     guess_btn.click(
         fn=make_initial_guess,
         inputs=[sketchpad, use_local_model],
-        outputs=[guess_output, status_output, feedback_group, history_state, history_output],
+        outputs=[guess_output, feedback_group, history_state, history_output],
     )
 
     correct_btn.click(
         fn=handle_correct,
         inputs=[history_state],
-        outputs=[status_output, feedback_group, history_state, history_output],
+        outputs=[feedback_group, history_state, history_output],
     )
 
     incorrect_btn.click(
         fn=handle_incorrect,
         inputs=[sketchpad, use_local_model, history_state],
-        outputs=[guess_output, status_output, feedback_group, history_state, history_output],
+        outputs=[guess_output, feedback_group, history_state, history_output],
     )
 
     sketchpad.clear(
         fn=reset_round,
-        outputs=[guess_output, status_output, feedback_group, history_state, history_output],
+        outputs=[guess_output, feedback_group, history_state, history_output],
     )
 
     # Dedicated API endpoint for backward compatibility with E2E tests and client scripts

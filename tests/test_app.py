@@ -168,10 +168,9 @@ class TestLocalGenerate:
 
 class TestFeedbackLoop:
     def test_make_initial_guess_empty(self):
-        """Submitting empty canvas updates status and hides feedback buttons."""
-        guess, status, feedback_update, history, hist_md = make_initial_guess(None, False)
+        """Submitting empty canvas updates guess and hides feedback buttons."""
+        guess, feedback_update, history, hist_md = make_initial_guess(None, False)
         assert guess == "Sketchpad is empty"
-        assert "empty" in status.lower()
         assert feedback_update.get("visible") is False
         assert history == []
         assert hist_md == ""
@@ -180,44 +179,39 @@ class TestFeedbackLoop:
         """Successful guess reveals feedback buttons and initializes history."""
         with patch("app.process_drawing", return_value="A Bicycle"):
             dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
-            guess, status, feedback_update, history, hist_md = make_initial_guess(dummy_sketch, False)
+            guess, feedback_update, history, hist_md = make_initial_guess(dummy_sketch, False)
 
             assert guess == "A Bicycle"
-            assert "A Bicycle" in status
             assert feedback_update.get("visible") is True
             assert history == ["A Bicycle"]
             assert "A Bicycle" in hist_md
 
     def test_handle_correct(self):
-        """Indicating correct shows celebration and hides feedback buttons."""
-        status, feedback_update, history, hist_md = handle_correct(["A Cat", "A Lion"])
-        assert "Spot on!" in status
-        assert "A Lion" in status
-        assert "2 attempts" in status
+        """Indicating correct hides feedback buttons and marks last item as correct."""
+        feedback_update, history, hist_md = handle_correct(["A Cat", "A Lion"])
         assert feedback_update.get("visible") is False
-        assert "✅ *(Correct!)*" in hist_md
+        assert "(Correct!)" in hist_md
 
     def test_handle_incorrect(self):
         """Indicating incorrect triggers process_drawing with history and returns new guess."""
         dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
         with patch("app.process_drawing", return_value="A Leopard") as mock_proc:
-            guess, status, feedback_update, new_history, hist_md = handle_incorrect(
+            guess, feedback_update, new_history, hist_md = handle_incorrect(
                 dummy_sketch, False, ["A Cat", "A Tiger"]
             )
             assert guess == "A Leopard"
-            assert "New guess (#3): **A Leopard**" in status
             assert feedback_update.get("visible") is True
             assert new_history == ["A Cat", "A Tiger", "A Leopard"]
-            assert "~~A Cat~~ ❌" in hist_md
-            assert "~~A Tiger~~ ❌" in hist_md
-            assert "**A Leopard** *(Current Guess)*" in hist_md
+            assert "~~A Cat~~ (Incorrect)" in hist_md
+            assert "~~A Tiger~~ (Incorrect)" in hist_md
+            assert "**A Leopard** (Current Guess)" in hist_md
             mock_proc.assert_called_once_with(
                 dummy_sketch, use_local_model=False, incorrect_guesses=["A Cat", "A Tiger"]
             )
 
     def test_reset_round(self):
         """Resetting round clears guess and hides feedback."""
-        guess, status, feedback_update, history, hist_md = reset_round()
+        guess, feedback_update, history, hist_md = reset_round()
         assert guess == ""
         assert feedback_update.get("visible") is False
         assert history == []
@@ -228,12 +222,12 @@ class TestFeedbackLoop:
         assert format_history_markdown([]) == ""
         
         md_inprogress = format_history_markdown(["Dog", "Wolf"], correct=False)
-        assert "~~Dog~~ ❌" in md_inprogress
-        assert "**Wolf** *(Current Guess)*" in md_inprogress
+        assert "~~Dog~~ (Incorrect)" in md_inprogress
+        assert "**Wolf** (Current Guess)" in md_inprogress
 
         md_correct = format_history_markdown(["Dog", "Wolf"], correct=True)
-        assert "~~Dog~~ ❌" in md_correct
-        assert "**Wolf** ✅ *(Correct!)*" in md_correct
+        assert "~~Dog~~ (Incorrect)" in md_correct
+        assert "**Wolf** (Correct!)" in md_correct
 
 
 class TestGradioInterface:
