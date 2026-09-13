@@ -66,7 +66,7 @@ def process_drawing(
     use_local_model=False,
     incorrect_guesses=None,
 ):
-    base_prompt = "Analyze the given drawing in detail, then return only what the primary subject depicted in the drawing is."
+    base_prompt = "Analyze the given drawing in detail, then return only the name of the primary subject depicted in the drawing."
     img = extract_and_prepare_image(sketch)
     if img is None:
         return "Sketchpad is empty"
@@ -94,7 +94,7 @@ def process_drawing(
             messages.append({
                 "role": "user",
                 "content": (
-                    f"Analyze the given drawing in detail, then return only what the primary subject depicted in the drawing is. The following answers are incorrect: {previous_list}."
+                    f"Analyze the given drawing in detail, then return only the name of the primary subject depicted in the drawing. The following answers are incorrect: {previous_list}."
                 ),
             })
         return local_generate(messages)
@@ -127,8 +127,7 @@ def process_drawing(
             messages.append({
                 "role": "user",
                 "content": (
-                    f"'{prev_guess}' is incorrect. The following guess(es) were already wrong: {previous_list}. "
-                    "Please re-examine the drawing carefully and provide a different guess. Return only what thing is in the drawing."
+                    f"Analyze the given drawing in detail, then return only the name of the primary subject depicted in the drawing. The following answers are incorrect: {previous_list}."
                 ),
             })
 
@@ -218,7 +217,7 @@ def handle_incorrect(sketch, use_local_model, history):
         format_history_markdown(new_history, correct=False),
     )
 
-def reset_round():
+def reset_round(*args, **kwargs):
     return (
         "",
         gr.update(visible=False),
@@ -280,6 +279,11 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
     incorrect_btn.click(
         fn=handle_incorrect,
         inputs=[sketchpad, use_local_model, history_state],
+        outputs=[guess_output, feedback_group, history_state, history_output],
+    )
+
+    sketchpad.change(
+        fn=reset_round,
         outputs=[guess_output, feedback_group, history_state, history_output],
     )
 

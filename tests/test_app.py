@@ -110,7 +110,8 @@ class TestProcessDrawing:
             assert messages[1]["role"] == "assistant"
             assert messages[1]["content"] == "A Cat"
             assert messages[2]["role"] == "user"
-            assert "'A Cat' is incorrect" in messages[2]["content"]
+            assert '"A Cat"' in messages[2]["content"]
+            assert "The following answers are incorrect:" in messages[2]["content"]
 
     def test_remote_model_failure(self, monkeypatch):
         """When InferenceClient raises an exception, return friendly error."""
@@ -147,7 +148,8 @@ class TestProcessDrawing:
             assert len(messages) == 6
             assert messages[2]["content"] == "A Dog"
             assert messages[4]["content"] == "A Wolf"
-            assert "'A Wolf' is incorrect" in messages[5]["content"]
+            assert '"A Wolf"' in messages[5]["content"]
+            assert "The following answers are incorrect:" in messages[5]["content"]
 
 
 class TestLocalGenerate:
@@ -245,3 +247,14 @@ class TestGradioInterface:
         assert sketchpad.brush.default_size <= 5
         assert len(sketchpad.brush.colors) >= 5
         assert sketchpad.brush.color_mode == "defaults"
+
+    def test_sketchpad_change_resets_history(self):
+        """Validate that changing or clearing the sketchpad triggers reset_round to clear history."""
+        reset_events = [
+            (fn.name, [t[1] for t in fn.targets])
+            for fn in demo.fns.values()
+            if fn.name == "reset_round"
+        ]
+        triggers = [t for _, target_list in reset_events for t in target_list]
+        assert "change" in triggers
+        assert "clear" in triggers
