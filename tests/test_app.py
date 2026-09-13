@@ -7,6 +7,7 @@ import pytest
 
 from app import (
     extract_and_prepare_image,
+    get_drawing_hash,
     image_to_data_url,
     process_drawing,
     local_generate,
@@ -171,22 +172,43 @@ class TestLocalGenerate:
 class TestFeedbackLoop:
     def test_make_initial_guess_empty(self):
         """Submitting empty canvas updates guess and hides feedback buttons."""
-        guess, feedback_update, history, hist_md = make_initial_guess(None, False)
+        guess, feedback_update, history, hist_md, last_drawing = make_initial_guess(None, False)
         assert guess == "Sketchpad is empty"
         assert feedback_update.get("visible") is False
         assert history == []
         assert hist_md == ""
+        assert last_drawing is None
 
     def test_make_initial_guess_success(self):
-        """Successful guess reveals feedback buttons and initializes history."""
+        """Successful guess reveals feedback buttons, initializes history, and records drawing hash."""
         with patch("app.process_drawing", return_value="A Bicycle"):
             dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
-            guess, feedback_update, history, hist_md = make_initial_guess(dummy_sketch, False)
+            guess, feedback_update, history, hist_md, last_drawing = make_initial_guess(dummy_sketch, False)
 
             assert guess == "A Bicycle"
             assert feedback_update.get("visible") is True
             assert history == ["A Bicycle"]
             assert "A Bicycle" in hist_md
+            assert last_drawing is not None
+
+    def test_make_initial_guess_changed_drawing_resets_history(self):
+        """When drawing has changed on initial submit, history resets with new guess."""
+        sketch1 = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
+        hash1 = get_drawing_hash(sketch1)
+
+        sketch2 = {"composite": Image.new("RGBA", (20, 20), (255, 0, 0, 255))}
+        hash2 = get_drawing_hash(sketch2)
+
+        with patch("app.process_drawing", return_value="A Tree") as mock_proc:
+            guess, feedback_update, new_history, hist_md, last_drawing = make_initial_guess(
+                sketch2, False, history=["A Cat", "A Dog"], last_drawing=hash1
+            )
+            assert guess == "A Tree"
+            assert new_history == ["A Tree"]
+            assert last_drawing == hash2
+            mock_proc.assert_called_once_with(
+                sketch2, use_local_model=False, incorrect_guesses=[]
+            )
 
     def test_handle_correct(self):
         """Indicating correct hides feedback buttons and marks last item as correct."""
@@ -194,12 +216,13 @@ class TestFeedbackLoop:
         assert feedback_update.get("visible") is False
         assert "(Correct!)" in hist_md
 
-    def test_handle_incorrect(self):
-        """Indicating incorrect triggers process_drawing with history and returns new guess."""
+    def test_handle_incorrect_same_drawing(self):
+        """When drawing has not changed, incorrect triggers process_drawing with history and appends new guess."""
         dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
+        drawing_hash = get_drawing_hash(dummy_sketch)
         with patch("app.process_drawing", return_value="A Leopard") as mock_proc:
-            guess, feedback_update, new_history, hist_md = handle_incorrect(
-                dummy_sketch, False, ["A Cat", "A Tiger"]
+            guess, feedback_update, new_history, hist_md, last_drawing = handle_incorrect(
+                dummy_sketch, False, ["A Cat", "A Tiger"], last_drawing=drawing_hash
             )
             assert guess == "A Leopard"
             assert feedback_update.get("visible") is True
@@ -210,14 +233,37 @@ class TestFeedbackLoop:
             mock_proc.assert_called_once_with(
                 dummy_sketch, use_local_model=False, incorrect_guesses=["A Cat", "A Tiger"]
             )
+            assert last_drawing == drawing_hash
+
+    def test_handle_incorrect_changed_drawing_resets_history(self):
+        """When drawing has changed on submit, history resets with new guess."""
+        sketch1 = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
+        hash1 = get_drawing_hash(sketch1)
+
+        sketch2 = {"composite": Image.new("RGBA", (20, 20), (255, 0, 0, 255))}
+        hash2 = get_drawing_hash(sketch2)
+
+        with patch("app.process_drawing", return_value="A Leopard") as mock_proc:
+            guess, feedback_update, new_history, hist_md, last_drawing = handle_incorrect(
+                sketch2, False, ["A Cat", "A Tiger"], last_drawing=hash1
+            )
+            assert guess == "A Leopard"
+            assert feedback_update.get("visible") is True
+            assert new_history == ["A Leopard"]
+            assert "**A Leopard** (Current Guess)" in hist_md
+            mock_proc.assert_called_once_with(
+                sketch2, use_local_model=False, incorrect_guesses=[]
+            )
+            assert last_drawing == hash2
 
     def test_reset_round(self):
-        """Resetting round clears guess and hides feedback."""
-        guess, feedback_update, history, hist_md = reset_round()
+        """Resetting round clears guess, hides feedback, and resets drawing hash."""
+        guess, feedback_update, history, hist_md, last_drawing = reset_round()
         assert guess == ""
         assert feedback_update.get("visible") is False
         assert history == []
         assert hist_md == ""
+        assert last_drawing is None
 
     def test_format_history_markdown(self):
         """Formatting markdown shows correct strike-throughs and status tags."""
@@ -248,13 +294,14 @@ class TestGradioInterface:
         assert len(sketchpad.brush.colors) >= 5
         assert sketchpad.brush.color_mode == "defaults"
 
-    def test_sketchpad_change_resets_history(self):
-        """Validate that changing or clearing the sketchpad triggers reset_round to clear history."""
-        reset_events = [
+    def test_sketchpad_events_no_reload_on_stroke(self):
+        """Validate that sketchpad does not register a change event (no reload on stroke), and clear event resets round."""
+        sketchpad = demo.input_components[0]
+        sketchpad_events = [
             (fn.name, [t[1] for t in fn.targets])
             for fn in demo.fns.values()
-            if fn.name == "reset_round"
+            if any(t[0] == sketchpad._id for t in fn.targets)
         ]
-        triggers = [t for _, target_list in reset_events for t in target_list]
-        assert "change" in triggers
+        triggers = [t for _, target_list in sketchpad_events for t in target_list]
+        assert "change" not in triggers
         assert "clear" in triggers

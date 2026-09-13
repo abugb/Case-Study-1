@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import os
 from io import BytesIO
 from PIL import Image
@@ -53,6 +54,12 @@ def extract_and_prepare_image(sketch):
     img = sketch["composite"].convert("RGBA")
     background = Image.new("RGBA", img.size, (255, 255, 255, 255))
     return Image.alpha_composite(background, img).convert("RGB")
+
+def get_drawing_hash(sketch):
+    img = extract_and_prepare_image(sketch)
+    if img is None:
+        return None
+    return hashlib.md5(img.tobytes()).hexdigest()
 
 def image_to_data_url(image):
     buffered = BytesIO()
@@ -157,22 +164,48 @@ def format_history_markdown(history, correct=False):
             lines.append(f"{i}. ~~{guess}~~ (Incorrect)")
     return "\n\n".join(lines)
 
-def make_initial_guess(sketch, use_local_model):
-    guess = process_drawing(sketch, use_local_model=use_local_model, incorrect_guesses=[])
+def make_initial_guess(sketch, use_local_model, history=None, last_drawing=None):
+    img = extract_and_prepare_image(sketch)
+    if img is None:
+        return (
+            "Sketchpad is empty",
+            gr.update(visible=False),
+            [],
+            "",
+            None,
+        )
+
+    current_hash = get_drawing_hash(sketch)
+    drawing_changed = (last_drawing is None or current_hash != last_drawing)
+
+    if drawing_changed:
+        incorrect_guesses = []
+        history_to_use = []
+    else:
+        incorrect_guesses = history if history else []
+        history_to_use = history if history else []
+
+    guess = process_drawing(
+        sketch,
+        use_local_model=use_local_model,
+        incorrect_guesses=incorrect_guesses,
+    )
     if guess in ("Sketchpad is empty", "HF_TOKEN not found", "Failed to connect to inference API") or guess.startswith("⚠️"):
         return (
             guess,
             gr.update(visible=False),
             [],
             "",
+            None,
         )
 
-    history = [guess]
+    new_history = history_to_use + [guess]
     return (
         guess,
         gr.update(visible=True),
-        history,
-        format_history_markdown(history, correct=False),
+        new_history,
+        format_history_markdown(new_history, correct=False),
+        current_hash,
     )
 
 def handle_correct(history):
@@ -188,33 +221,56 @@ def handle_correct(history):
         format_history_markdown(history, correct=True),
     )
 
-def handle_incorrect(sketch, use_local_model, history):
-    if not history:
+def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None):
+    img = extract_and_prepare_image(sketch)
+    if img is None:
         return (
-            "",
+            "Sketchpad is empty",
             gr.update(visible=False),
             [],
             "",
+            None,
         )
+
+    current_hash = get_drawing_hash(sketch)
+    drawing_changed = (last_drawing is None or current_hash != last_drawing)
+
+    if drawing_changed:
+        incorrect_guesses = []
+        history_to_use = []
+    else:
+        if not history:
+            return (
+                "",
+                gr.update(visible=False),
+                [],
+                "",
+                current_hash,
+            )
+        incorrect_guesses = history
+        history_to_use = history
+
     new_guess = process_drawing(
         sketch,
         use_local_model=use_local_model,
-        incorrect_guesses=history,
+        incorrect_guesses=incorrect_guesses,
     )
     if new_guess in ("Sketchpad is empty", "HF_TOKEN not found", "Failed to connect to inference API") or new_guess.startswith("⚠️"):
         return (
             new_guess,
-            gr.update(visible=True),
-            history,
-            format_history_markdown(history, correct=False),
+            gr.update(visible=True if history_to_use else False),
+            history_to_use,
+            format_history_markdown(history_to_use, correct=False),
+            current_hash,
         )
 
-    new_history = history + [new_guess]
+    new_history = history_to_use + [new_guess]
     return (
         new_guess,
         gr.update(visible=True),
         new_history,
         format_history_markdown(new_history, correct=False),
+        current_hash,
     )
 
 def reset_round(*args, **kwargs):
@@ -223,6 +279,7 @@ def reset_round(*args, **kwargs):
         gr.update(visible=False),
         [],
         "",
+        None,
     )
 
 brush = gr.Brush(
@@ -262,12 +319,13 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
 
             history_output = gr.Markdown(label="Guess History")
             history_state = gr.State([])
+            last_drawing_state = gr.State(None)
 
     # Event handlers
     guess_btn.click(
         fn=make_initial_guess,
-        inputs=[sketchpad, use_local_model],
-        outputs=[guess_output, feedback_group, history_state, history_output],
+        inputs=[sketchpad, use_local_model, history_state, last_drawing_state],
+        outputs=[guess_output, feedback_group, history_state, history_output, last_drawing_state],
     )
 
     correct_btn.click(
@@ -278,18 +336,13 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
 
     incorrect_btn.click(
         fn=handle_incorrect,
-        inputs=[sketchpad, use_local_model, history_state],
-        outputs=[guess_output, feedback_group, history_state, history_output],
-    )
-
-    sketchpad.change(
-        fn=reset_round,
-        outputs=[guess_output, feedback_group, history_state, history_output],
+        inputs=[sketchpad, use_local_model, history_state, last_drawing_state],
+        outputs=[guess_output, feedback_group, history_state, history_output, last_drawing_state],
     )
 
     sketchpad.clear(
         fn=reset_round,
-        outputs=[guess_output, feedback_group, history_state, history_output],
+        outputs=[guess_output, feedback_group, history_state, history_output, last_drawing_state],
     )
 
     # Dedicated API endpoint for backward compatibility with E2E tests and client scripts
