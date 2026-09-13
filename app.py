@@ -37,10 +37,12 @@ def local_generate(
     try:
         outputs = pipe(
             messages,
-            max_new_tokens=max_tokens,
-            do_sample=True,
-            temperature=temperature,
-            top_p=top_p,
+            generate_kwargs={
+                "max_new_tokens": max_tokens,
+                "do_sample": True,
+                "temperature": temperature,
+                "top_p": top_p,
+            }
         )
         if not outputs:
             return "Model produced no output."
