@@ -7,7 +7,10 @@ from io import BytesIO
 from PIL import Image
 
 import gradio as gr
-import torch
+try:
+    import torch
+except ImportError:
+    torch = None
 from transformers import pipeline
 from huggingface_hub import InferenceClient
 
@@ -16,12 +19,13 @@ LOCAL_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 
 def log_inference_metrics(model_type, vram_mb, input_tokens, output_tokens):
     try:
+        from datetime import timezone
         log_entry = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "model_type": model_type,
-            "vram_mb": round(vram_mb, 2) if vram_mb is not None else 0.0,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens
+            "vram_mb": round(vram_mb, 2) if isinstance(vram_mb, (int, float)) else 0.0,
+            "input_tokens": input_tokens if isinstance(input_tokens, int) else None,
+            "output_tokens": output_tokens if isinstance(output_tokens, int) else None
         }
         with open("inference_metrics.log", "a") as f:
             f.write(json.dumps(log_entry) + "\n")
@@ -52,7 +56,7 @@ def local_generate(
     top_p=0.95,
 ):
     try:
-        if torch.cuda.is_available():
+        if torch is not None and torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
             
         outputs = pipe(
@@ -69,7 +73,7 @@ def local_generate(
             
         generated_text = outputs[0]["generated_text"][-1]["content"].strip()
         
-        vram_mb = torch.cuda.max_memory_allocated() / (1024 ** 2) if torch.cuda.is_available() else 0.0
+        vram_mb = torch.cuda.max_memory_allocated() / (1024 ** 2) if (torch is not None and torch.cuda.is_available()) else 0.0
         
         in_tokens, out_tokens = None, None
         if pipe and hasattr(pipe, 'tokenizer') and pipe.tokenizer:
