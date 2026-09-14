@@ -331,25 +331,29 @@ class TestErrorResponses:
 
 class TestInferenceMetricsUI:
     def test_format_metrics_markdown_remote(self):
-        """Format metrics for remote model properly notes serverless VRAM and displays tokens/latency."""
-        md = format_metrics_markdown("remote", latency_ms=1245.67, vram_mb=None, in_tokens=150, out_tokens=5)
+        """Format metrics displays tokens and latency without emojis or hardware indicators."""
+        md = format_metrics_markdown(latency_ms=1245.67, in_tokens=150, out_tokens=5)
         assert "1245.7 ms" in md
         assert "150 in / 5 out" in md
-        assert "Serverless API (N/A VRAM)" in md
+        assert "⏱️" not in md
+        assert "🪙" not in md
+        assert "Hardware" not in md
+        assert "Serverless" not in md
 
     def test_format_metrics_markdown_local(self):
-        """Format metrics for local model displays ZeroGPU allocated VRAM and tokens/latency."""
-        md = format_metrics_markdown("local", latency_ms=832.12, vram_mb=3420.54, in_tokens=180, out_tokens=6)
+        """Format metrics for local model displays tokens and latency without emojis or hardware indicators."""
+        md = format_metrics_markdown(latency_ms=832.12, in_tokens=180, out_tokens=6)
         assert "832.1 ms" in md
         assert "180 in / 6 out" in md
-        assert "ZeroGPU (3420.5 MB VRAM)" in md
+        assert "ZeroGPU" not in md
+        assert "VRAM" not in md
 
     def test_format_metrics_markdown_missing_values(self):
         """Handle None values gracefully by displaying N/A."""
-        md = format_metrics_markdown("remote", latency_ms=None, vram_mb=None, in_tokens=None, out_tokens=None)
+        md = format_metrics_markdown(latency_ms=None, in_tokens=None, out_tokens=None)
         assert "Latency:** N/A" in md
         assert "N/A in / N/A out" in md
-        assert "Serverless API (N/A VRAM)" in md
+        assert "Hardware" not in md
 
     def test_remote_process_drawing_returns_metrics(self, monkeypatch):
         """When return_metrics=True, remote process_drawing returns (guess, metrics_md)."""
@@ -370,14 +374,14 @@ class TestInferenceMetricsUI:
 
             guess, metrics_md = process_drawing(dummy_sketch, use_local_model=False, return_metrics=True)
             assert guess == "A Cat"
-            assert "Serverless API (N/A VRAM)" in metrics_md
             assert "150 in / 5 out" in metrics_md
+            assert "Hardware" not in metrics_md
 
     def test_local_process_drawing_returns_metrics(self):
         """When return_metrics=True, local process_drawing returns (guess, metrics_md)."""
         dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
 
-        with patch("app.local_generate", return_value=("A Dog", "⏱️ **Latency:** 50.0 ms")):
+        with patch("app.local_generate", return_value=("A Dog", "**Latency:** 50.0 ms")):
             guess, metrics_md = process_drawing(dummy_sketch, use_local_model=True, return_metrics=True)
             assert guess == "A Dog"
             assert "50.0 ms" in metrics_md

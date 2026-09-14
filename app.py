@@ -16,18 +16,12 @@ from huggingface_hub import InferenceClient
 REMOTE_MODEL = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 LOCAL_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 
-def format_metrics_markdown(model_type, latency_ms, vram_mb=None, in_tokens=None, out_tokens=None):
+def format_metrics_markdown(latency_ms, in_tokens=None, out_tokens=None):
     lat_str = f"{round(latency_ms, 1)} ms" if isinstance(latency_ms, (int, float)) else "N/A"
     in_str = str(in_tokens) if isinstance(in_tokens, int) else "N/A"
     out_str = str(out_tokens) if isinstance(out_tokens, int) else "N/A"
 
-    if model_type == "local":
-        vram_str = f"{round(vram_mb, 1)} MB" if isinstance(vram_mb, (int, float)) else "N/A"
-        hw_str = f"ZeroGPU ({vram_str} VRAM)"
-    else:
-        hw_str = "Serverless API (N/A VRAM)"
-
-    return f"⏱️ **Latency:** {lat_str} &nbsp;|&nbsp; 🪙 **Tokens:** {in_str} in / {out_str} out &nbsp;|&nbsp; 🖥️ **Hardware:** {hw_str}"
+    return f"**Latency:** {lat_str} &nbsp;|&nbsp; **Tokens:** {in_str} in / {out_str} out"
 
 try:
     import spaces
@@ -84,7 +78,7 @@ def local_generate(
             except Exception:
                 pass
                 
-        metrics_md = format_metrics_markdown("local", latency_ms, vram_mb, in_tokens, out_tokens)
+        metrics_md = format_metrics_markdown(latency_ms, in_tokens, out_tokens)
         return (generated_text, metrics_md) if return_metrics else generated_text
     except Exception as e:
         err = f"⚠️ Local Model Error: {e}"
@@ -196,7 +190,7 @@ def process_drawing(
             in_tokens, out_tokens = None, None
         
         guess = content.strip() if content else "Remote model returned an empty response."
-        metrics_md = format_metrics_markdown("remote", latency_ms, None, in_tokens, out_tokens)
+        metrics_md = format_metrics_markdown(latency_ms, in_tokens, out_tokens)
         return (guess, metrics_md) if return_metrics else guess
     except Exception:
         return ("Failed to connect to inference API", "") if return_metrics else "Failed to connect to inference API"
