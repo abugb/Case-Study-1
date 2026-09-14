@@ -1,15 +1,32 @@
 import base64
 import hashlib
 import os
+import json
+from datetime import datetime
 from io import BytesIO
 from PIL import Image
 
 import gradio as gr
+import torch
 from transformers import pipeline
 from huggingface_hub import InferenceClient
 
 REMOTE_MODEL = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 LOCAL_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
+
+def log_inference_metrics(model_type, vram_mb, input_tokens, output_tokens):
+    try:
+        log_entry = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "model_type": model_type,
+            "vram_mb": round(vram_mb, 2) if vram_mb is not None else 0.0,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens
+        }
+        with open("inference_metrics.log", "a") as f:
+            f.write(json.dumps(log_entry) + "\n")
+    except Exception as e:
+        print(f"Error logging metrics: {e}")
 
 try:
     import spaces
@@ -35,6 +52,9 @@ def local_generate(
     top_p=0.95,
 ):
     try:
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+            
         outputs = pipe(
             messages,
             generate_kwargs={
@@ -46,7 +66,22 @@ def local_generate(
         )
         if not outputs:
             return "Model produced no output."
-        return outputs[0]["generated_text"][-1]["content"].strip()
+            
+        generated_text = outputs[0]["generated_text"][-1]["content"].strip()
+        
+        vram_mb = torch.cuda.max_memory_allocated() / (1024 ** 2) if torch.cuda.is_available() else 0.0
+        
+        in_tokens, out_tokens = None, None
+        if pipe and hasattr(pipe, 'tokenizer') and pipe.tokenizer:
+            try:
+                out_tokens = len(pipe.tokenizer.encode(generated_text))
+                in_tokens = len(pipe.tokenizer.encode(str(messages)))
+            except Exception:
+                pass
+                
+        log_inference_metrics("local", vram_mb, in_tokens, out_tokens)
+        
+        return generated_text
     except Exception as e:
         return f"⚠️ Local Model Error: {e}"
 
@@ -142,6 +177,13 @@ def process_drawing(
 
         choice = response.choices[0]
         content = choice.message.content
+        
+        usage = getattr(response, "usage", None)
+        in_tokens = usage.prompt_tokens if usage else None
+        out_tokens = usage.completion_tokens if usage else None
+        
+        log_inference_metrics("remote", 0.0, in_tokens, out_tokens)
+        
         return content.strip() if content else "Remote model returned an empty response."
     except Exception as e:
         return "Failed to connect to inference API"
