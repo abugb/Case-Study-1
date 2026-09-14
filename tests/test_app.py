@@ -167,6 +167,13 @@ class TestLocalGenerate:
         monkeypatch.setattr("app.pipe", mock_pipe)
         result = local_generate([{"role": "user", "content": "test"}])
         assert "⚠️ Local Model Error: CUDA out of memory" in result
+    def test_local_generate_success(self, monkeypatch):
+        """When pipe returns text, it should successfully extract and log it."""
+        mock_pipe = MagicMock()
+        mock_pipe.return_value = [{"generated_text": [{"content": "A Local Cat"}]}]
+        monkeypatch.setattr("app.pipe", mock_pipe)
+        result = local_generate([{"role": "user", "content": "test"}])
+        assert result == "A Local Cat"
 
 
 class TestFeedbackLoop:
