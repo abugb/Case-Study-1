@@ -31,8 +31,10 @@ def log_inference_metrics(model_type, model_name, attempt, latency_ms, vram_mb, 
             "input_tokens": input_tokens if isinstance(input_tokens, int) else None,
             "output_tokens": output_tokens if isinstance(output_tokens, int) else None
         }
+        log_line = json.dumps(log_entry)
+        print(f"[METRICS] {log_line}", flush=True)
         with open("inference_metrics.log", "a") as f:
-            f.write(json.dumps(log_entry) + "\n")
+            f.write(log_line + "\n")
     except Exception as e:
         print(f"Error logging metrics: {e}")
 
