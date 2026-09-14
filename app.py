@@ -2,6 +2,7 @@ import base64
 import hashlib
 import os
 import json
+import time
 from datetime import datetime
 from io import BytesIO
 from PIL import Image
@@ -17,12 +18,15 @@ from huggingface_hub import InferenceClient
 REMOTE_MODEL = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 LOCAL_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 
-def log_inference_metrics(model_type, vram_mb, input_tokens, output_tokens):
+def log_inference_metrics(model_type, model_name, attempt, latency_ms, vram_mb, input_tokens, output_tokens):
     try:
         from datetime import timezone
         log_entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "model_type": model_type,
+            "model_name": model_name,
+            "attempt": attempt,
+            "latency_ms": round(latency_ms, 2) if isinstance(latency_ms, (int, float)) else None,
             "vram_mb": round(vram_mb, 2) if isinstance(vram_mb, (int, float)) else 0.0,
             "input_tokens": input_tokens if isinstance(input_tokens, int) else None,
             "output_tokens": output_tokens if isinstance(output_tokens, int) else None
@@ -54,11 +58,13 @@ def local_generate(
     max_tokens=4096,
     temperature=0.7,
     top_p=0.95,
+    attempt=1,
 ):
     try:
         if torch is not None and torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
             
+        t0 = time.perf_counter()
         outputs = pipe(
             messages,
             generate_kwargs={
@@ -68,6 +74,8 @@ def local_generate(
                 "top_p": top_p,
             }
         )
+        latency_ms = (time.perf_counter() - t0) * 1000
+        
         if not outputs:
             return "Model produced no output."
             
@@ -83,7 +91,7 @@ def local_generate(
             except Exception:
                 pass
                 
-        log_inference_metrics("local", vram_mb, in_tokens, out_tokens)
+        log_inference_metrics("local", LOCAL_MODEL, attempt, latency_ms, vram_mb, in_tokens, out_tokens)
         
         return generated_text
     except Exception as e:
@@ -147,7 +155,7 @@ def process_drawing(
             }
         ]
         messages = append_incorrect_guesses(messages, base_prompt, incorrect_guesses)
-        return local_generate(messages)
+        return local_generate(messages, attempt=len(incorrect_guesses) + 1)
 
     # Use Space Secret HF_TOKEN for remote model
     token = os.environ.get("HF_TOKEN")
@@ -173,20 +181,25 @@ def process_drawing(
         ]
         messages = append_incorrect_guesses(messages, base_prompt, incorrect_guesses)
 
+        t0 = time.perf_counter()
         response = client.chat.completions.create(
             model=REMOTE_MODEL,
             messages=messages,
             max_tokens=4096,
         )
+        latency_ms = (time.perf_counter() - t0) * 1000
 
         choice = response.choices[0]
         content = choice.message.content
         
-        usage = getattr(response, "usage", None)
-        in_tokens = usage.prompt_tokens if usage else None
-        out_tokens = usage.completion_tokens if usage else None
+        try:
+            in_tokens = response.usage.prompt_tokens
+            out_tokens = response.usage.completion_tokens
+        except (AttributeError, TypeError):
+            in_tokens, out_tokens = None, None
         
-        log_inference_metrics("remote", 0.0, in_tokens, out_tokens)
+        attempt = len(incorrect_guesses) + 1
+        log_inference_metrics("remote", REMOTE_MODEL, attempt, latency_ms, 0.0, in_tokens, out_tokens)
         
         return content.strip() if content else "Remote model returned an empty response."
     except Exception as e:

@@ -11,6 +11,7 @@ from app import (
     image_to_data_url,
     process_drawing,
     local_generate,
+    log_inference_metrics,
     make_initial_guess,
     handle_correct,
     handle_incorrect,
@@ -324,3 +325,86 @@ class TestErrorResponses:
         # Valid guesses should return False
         assert is_error_response("A Cat") is False
         assert is_error_response("The drawing is a Dog") is False
+
+
+class TestInferenceMetricsLogging:
+    def test_remote_logging_called_with_enriched_args(self, monkeypatch, _no_log_metrics):
+        """Remote inference logs model_name, attempt, latency, and token counts."""
+        monkeypatch.setenv("HF_TOKEN", "mock_token")
+        dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = "A Cat"
+        mock_usage = MagicMock()
+        mock_usage.prompt_tokens = 150
+        mock_usage.completion_tokens = 5
+        mock_response = MagicMock(choices=[mock_choice], usage=mock_usage)
+
+        with patch("app.InferenceClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            result = process_drawing(dummy_sketch, use_local_model=False)
+            assert result == "A Cat"
+
+            _no_log_metrics.assert_called_once()
+            call_args = _no_log_metrics.call_args
+            assert call_args[0][0] == "remote"                        # model_type
+            assert "Qwen" in call_args[0][1]                          # model_name
+            assert call_args[0][2] == 1                                # attempt (no retries)
+            assert isinstance(call_args[0][3], float)                  # latency_ms
+            assert call_args[0][3] > 0                                 # latency_ms > 0
+            assert call_args[0][4] == 0.0                              # vram_mb (remote)
+            assert call_args[0][5] == 150                              # input_tokens
+            assert call_args[0][6] == 5                                # output_tokens
+
+    def test_remote_logging_retry_attempt(self, monkeypatch, _no_log_metrics):
+        """Remote retry inference logs attempt=2 when one incorrect guess is provided."""
+        monkeypatch.setenv("HF_TOKEN", "mock_token")
+        dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = "A Tiger"
+        mock_usage = MagicMock()
+        mock_usage.prompt_tokens = 200
+        mock_usage.completion_tokens = 4
+        mock_response = MagicMock(choices=[mock_choice], usage=mock_usage)
+
+        with patch("app.InferenceClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            result = process_drawing(dummy_sketch, use_local_model=False, incorrect_guesses=["A Cat"])
+            assert result == "A Tiger"
+
+            call_args = _no_log_metrics.call_args
+            assert call_args[0][2] == 2  # attempt (1 retry)
+
+    def test_local_logging_called_with_enriched_args(self, monkeypatch, _no_log_metrics):
+        """Local inference logs model_name, attempt, latency, and token counts."""
+        mock_pipe = MagicMock()
+        mock_pipe.return_value = [{"generated_text": [{"content": "A Local Cat"}]}]
+        monkeypatch.setattr("app.pipe", mock_pipe)
+        result = local_generate([{"role": "user", "content": "test"}])
+        assert result == "A Local Cat"
+
+        _no_log_metrics.assert_called_once()
+        call_args = _no_log_metrics.call_args
+        assert call_args[0][0] == "local"                          # model_type
+        assert "Qwen" in call_args[0][1]                           # model_name
+        assert call_args[0][2] == 1                                # attempt (default)
+        assert isinstance(call_args[0][3], float)                  # latency_ms
+        assert call_args[0][3] > 0                                 # latency_ms > 0
+
+    def test_no_log_file_written_during_tests(self, tmp_path, monkeypatch):
+        """Verify the autouse fixture prevents the log file from being written."""
+        log_path = tmp_path / "inference_metrics.log"
+        monkeypatch.chdir(tmp_path)
+        # log_inference_metrics is mocked by _no_log_metrics autouse fixture,
+        # so even calling process_drawing should not create a log file
+        dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
+        with patch("app.local_generate", return_value="A Dog"):
+            process_drawing(dummy_sketch, use_local_model=True)
+        assert not log_path.exists()
