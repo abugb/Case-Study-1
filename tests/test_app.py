@@ -11,7 +11,7 @@ from app import (
     image_to_data_url,
     process_drawing,
     local_generate,
-    log_inference_metrics,
+    format_metrics_markdown,
     make_initial_guess,
     handle_correct,
     handle_incorrect,
@@ -180,8 +180,9 @@ class TestLocalGenerate:
 class TestFeedbackLoop:
     def test_make_initial_guess_empty(self):
         """Submitting empty canvas updates guess and hides feedback buttons."""
-        guess, feedback_update, history, hist_md, last_drawing = make_initial_guess(None, False)
+        guess, metrics_md, feedback_update, history, hist_md, last_drawing = make_initial_guess(None, False)
         assert guess == "Sketchpad is empty"
+        assert metrics_md == ""
         assert feedback_update.get("visible") is False
         assert history == []
         assert hist_md == ""
@@ -191,7 +192,7 @@ class TestFeedbackLoop:
         """Successful guess reveals feedback buttons, initializes history, and records drawing hash."""
         with patch("app.process_drawing", return_value="A Bicycle"):
             dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
-            guess, feedback_update, history, hist_md, last_drawing = make_initial_guess(dummy_sketch, False)
+            guess, metrics_md, feedback_update, history, hist_md, last_drawing = make_initial_guess(dummy_sketch, False)
 
             assert guess == "A Bicycle"
             assert feedback_update.get("visible") is True
@@ -208,14 +209,14 @@ class TestFeedbackLoop:
         hash2 = get_drawing_hash(sketch2)
 
         with patch("app.process_drawing", return_value="A Tree") as mock_proc:
-            guess, feedback_update, new_history, hist_md, last_drawing = make_initial_guess(
+            guess, metrics_md, feedback_update, new_history, hist_md, last_drawing = make_initial_guess(
                 sketch2, False, history=["A Cat", "A Dog"], last_drawing=hash1
             )
             assert guess == "A Tree"
             assert new_history == ["A Tree"]
             assert last_drawing == hash2
             mock_proc.assert_called_once_with(
-                sketch2, use_local_model=False, incorrect_guesses=[]
+                sketch2, use_local_model=False, incorrect_guesses=[], return_metrics=True
             )
 
     def test_handle_correct(self):
@@ -229,7 +230,7 @@ class TestFeedbackLoop:
         dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
         drawing_hash = get_drawing_hash(dummy_sketch)
         with patch("app.process_drawing", return_value="A Leopard") as mock_proc:
-            guess, feedback_update, new_history, hist_md, last_drawing = handle_incorrect(
+            guess, metrics_md, feedback_update, new_history, hist_md, last_drawing = handle_incorrect(
                 dummy_sketch, False, ["A Cat", "A Tiger"], last_drawing=drawing_hash
             )
             assert guess == "A Leopard"
@@ -239,7 +240,7 @@ class TestFeedbackLoop:
             assert "~~A Tiger~~ (Incorrect)" in hist_md
             assert "**A Leopard** (Current Guess)" in hist_md
             mock_proc.assert_called_once_with(
-                dummy_sketch, use_local_model=False, incorrect_guesses=["A Cat", "A Tiger"]
+                dummy_sketch, use_local_model=False, incorrect_guesses=["A Cat", "A Tiger"], return_metrics=True
             )
             assert last_drawing == drawing_hash
 
@@ -252,7 +253,7 @@ class TestFeedbackLoop:
         hash2 = get_drawing_hash(sketch2)
 
         with patch("app.process_drawing", return_value="A Leopard") as mock_proc:
-            guess, feedback_update, new_history, hist_md, last_drawing = handle_incorrect(
+            guess, metrics_md, feedback_update, new_history, hist_md, last_drawing = handle_incorrect(
                 sketch2, False, ["A Cat", "A Tiger"], last_drawing=hash1
             )
             assert guess == "A Leopard"
@@ -260,14 +261,15 @@ class TestFeedbackLoop:
             assert new_history == ["A Leopard"]
             assert "**A Leopard** (Current Guess)" in hist_md
             mock_proc.assert_called_once_with(
-                sketch2, use_local_model=False, incorrect_guesses=[]
+                sketch2, use_local_model=False, incorrect_guesses=[], return_metrics=True
             )
             assert last_drawing == hash2
 
     def test_reset_round(self):
         """Resetting round clears guess, hides feedback, and resets drawing hash."""
-        guess, feedback_update, history, hist_md, last_drawing = reset_round()
+        guess, metrics_md, feedback_update, history, hist_md, last_drawing = reset_round()
         assert guess == ""
+        assert metrics_md == ""
         assert feedback_update.get("visible") is False
         assert history == []
         assert hist_md == ""
@@ -327,9 +329,30 @@ class TestErrorResponses:
         assert is_error_response("The drawing is a Dog") is False
 
 
-class TestInferenceMetricsLogging:
-    def test_remote_logging_called_with_enriched_args(self, monkeypatch, _no_log_metrics):
-        """Remote inference logs model_name, attempt, latency, and token counts."""
+class TestInferenceMetricsUI:
+    def test_format_metrics_markdown_remote(self):
+        """Format metrics for remote model properly notes serverless VRAM and displays tokens/latency."""
+        md = format_metrics_markdown("remote", latency_ms=1245.67, vram_mb=None, in_tokens=150, out_tokens=5)
+        assert "1245.7 ms" in md
+        assert "150 in / 5 out" in md
+        assert "Serverless API (N/A VRAM)" in md
+
+    def test_format_metrics_markdown_local(self):
+        """Format metrics for local model displays ZeroGPU allocated VRAM and tokens/latency."""
+        md = format_metrics_markdown("local", latency_ms=832.12, vram_mb=3420.54, in_tokens=180, out_tokens=6)
+        assert "832.1 ms" in md
+        assert "180 in / 6 out" in md
+        assert "ZeroGPU (3420.5 MB VRAM)" in md
+
+    def test_format_metrics_markdown_missing_values(self):
+        """Handle None values gracefully by displaying N/A."""
+        md = format_metrics_markdown("remote", latency_ms=None, vram_mb=None, in_tokens=None, out_tokens=None)
+        assert "Latency:** N/A" in md
+        assert "N/A in / N/A out" in md
+        assert "Serverless API (N/A VRAM)" in md
+
+    def test_remote_process_drawing_returns_metrics(self, monkeypatch):
+        """When return_metrics=True, remote process_drawing returns (guess, metrics_md)."""
         monkeypatch.setenv("HF_TOKEN", "mock_token")
         dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
 
@@ -345,66 +368,16 @@ class TestInferenceMetricsLogging:
             mock_client.chat.completions.create.return_value = mock_response
             mock_client_cls.return_value = mock_client
 
-            result = process_drawing(dummy_sketch, use_local_model=False)
-            assert result == "A Cat"
+            guess, metrics_md = process_drawing(dummy_sketch, use_local_model=False, return_metrics=True)
+            assert guess == "A Cat"
+            assert "Serverless API (N/A VRAM)" in metrics_md
+            assert "150 in / 5 out" in metrics_md
 
-            _no_log_metrics.assert_called_once()
-            call_args = _no_log_metrics.call_args
-            assert call_args[0][0] == "remote"                        # model_type
-            assert "Qwen" in call_args[0][1]                          # model_name
-            assert call_args[0][2] == 1                                # attempt (no retries)
-            assert isinstance(call_args[0][3], float)                  # latency_ms
-            assert call_args[0][3] > 0                                 # latency_ms > 0
-            assert call_args[0][4] == 0.0                              # vram_mb (remote)
-            assert call_args[0][5] == 150                              # input_tokens
-            assert call_args[0][6] == 5                                # output_tokens
-
-    def test_remote_logging_retry_attempt(self, monkeypatch, _no_log_metrics):
-        """Remote retry inference logs attempt=2 when one incorrect guess is provided."""
-        monkeypatch.setenv("HF_TOKEN", "mock_token")
+    def test_local_process_drawing_returns_metrics(self):
+        """When return_metrics=True, local process_drawing returns (guess, metrics_md)."""
         dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
 
-        mock_choice = MagicMock()
-        mock_choice.message.content = "A Tiger"
-        mock_usage = MagicMock()
-        mock_usage.prompt_tokens = 200
-        mock_usage.completion_tokens = 4
-        mock_response = MagicMock(choices=[mock_choice], usage=mock_usage)
-
-        with patch("app.InferenceClient") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_client_cls.return_value = mock_client
-
-            result = process_drawing(dummy_sketch, use_local_model=False, incorrect_guesses=["A Cat"])
-            assert result == "A Tiger"
-
-            call_args = _no_log_metrics.call_args
-            assert call_args[0][2] == 2  # attempt (1 retry)
-
-    def test_local_logging_called_with_enriched_args(self, monkeypatch, _no_log_metrics):
-        """Local inference logs model_name, attempt, latency, and token counts."""
-        mock_pipe = MagicMock()
-        mock_pipe.return_value = [{"generated_text": [{"content": "A Local Cat"}]}]
-        monkeypatch.setattr("app.pipe", mock_pipe)
-        result = local_generate([{"role": "user", "content": "test"}])
-        assert result == "A Local Cat"
-
-        _no_log_metrics.assert_called_once()
-        call_args = _no_log_metrics.call_args
-        assert call_args[0][0] == "local"                          # model_type
-        assert "Qwen" in call_args[0][1]                           # model_name
-        assert call_args[0][2] == 1                                # attempt (default)
-        assert isinstance(call_args[0][3], float)                  # latency_ms
-        assert call_args[0][3] > 0                                 # latency_ms > 0
-
-    def test_no_log_file_written_during_tests(self, tmp_path, monkeypatch):
-        """Verify the autouse fixture prevents the log file from being written."""
-        log_path = tmp_path / "inference_metrics.log"
-        monkeypatch.chdir(tmp_path)
-        # log_inference_metrics is mocked by _no_log_metrics autouse fixture,
-        # so even calling process_drawing should not create a log file
-        dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
-        with patch("app.local_generate", return_value="A Dog"):
-            process_drawing(dummy_sketch, use_local_model=True)
-        assert not log_path.exists()
+        with patch("app.local_generate", return_value=("A Dog", "⏱️ **Latency:** 50.0 ms")):
+            guess, metrics_md = process_drawing(dummy_sketch, use_local_model=True, return_metrics=True)
+            assert guess == "A Dog"
+            assert "50.0 ms" in metrics_md

@@ -1,9 +1,7 @@
 import base64
 import hashlib
 import os
-import json
 import time
-from datetime import datetime
 from io import BytesIO
 from PIL import Image
 
@@ -18,25 +16,18 @@ from huggingface_hub import InferenceClient
 REMOTE_MODEL = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 LOCAL_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 
-def log_inference_metrics(model_type, model_name, attempt, latency_ms, vram_mb, input_tokens, output_tokens):
-    try:
-        from datetime import timezone
-        log_entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "model_type": model_type,
-            "model_name": model_name,
-            "attempt": attempt,
-            "latency_ms": round(latency_ms, 2) if isinstance(latency_ms, (int, float)) else None,
-            "vram_mb": round(vram_mb, 2) if isinstance(vram_mb, (int, float)) else 0.0,
-            "input_tokens": input_tokens if isinstance(input_tokens, int) else None,
-            "output_tokens": output_tokens if isinstance(output_tokens, int) else None
-        }
-        log_line = json.dumps(log_entry)
-        print(f"[METRICS] {log_line}", flush=True)
-        with open("inference_metrics.log", "a") as f:
-            f.write(log_line + "\n")
-    except Exception as e:
-        print(f"Error logging metrics: {e}")
+def format_metrics_markdown(model_type, latency_ms, vram_mb=None, in_tokens=None, out_tokens=None):
+    lat_str = f"{round(latency_ms, 1)} ms" if isinstance(latency_ms, (int, float)) else "N/A"
+    in_str = str(in_tokens) if isinstance(in_tokens, int) else "N/A"
+    out_str = str(out_tokens) if isinstance(out_tokens, int) else "N/A"
+
+    if model_type == "local":
+        vram_str = f"{round(vram_mb, 1)} MB" if isinstance(vram_mb, (int, float)) else "N/A"
+        hw_str = f"ZeroGPU ({vram_str} VRAM)"
+    else:
+        hw_str = "Serverless API (N/A VRAM)"
+
+    return f"⏱️ **Latency:** {lat_str} &nbsp;|&nbsp; 🪙 **Tokens:** {in_str} in / {out_str} out &nbsp;|&nbsp; 🖥️ **Hardware:** {hw_str}"
 
 try:
     import spaces
@@ -60,7 +51,7 @@ def local_generate(
     max_tokens=4096,
     temperature=0.7,
     top_p=0.95,
-    attempt=1,
+    return_metrics=False,
 ):
     try:
         if torch is not None and torch.cuda.is_available():
@@ -79,7 +70,7 @@ def local_generate(
         latency_ms = (time.perf_counter() - t0) * 1000
         
         if not outputs:
-            return "Model produced no output."
+            return ("Model produced no output.", "") if return_metrics else "Model produced no output."
             
         generated_text = outputs[0]["generated_text"][-1]["content"].strip()
         
@@ -93,11 +84,11 @@ def local_generate(
             except Exception:
                 pass
                 
-        log_inference_metrics("local", LOCAL_MODEL, attempt, latency_ms, vram_mb, in_tokens, out_tokens)
-        
-        return generated_text
+        metrics_md = format_metrics_markdown("local", latency_ms, vram_mb, in_tokens, out_tokens)
+        return (generated_text, metrics_md) if return_metrics else generated_text
     except Exception as e:
-        return f"⚠️ Local Model Error: {e}"
+        err = f"⚠️ Local Model Error: {e}"
+        return (err, "") if return_metrics else err
 
 def extract_and_prepare_image(sketch):
     if not sketch or not sketch.get("composite"):
@@ -136,11 +127,12 @@ def process_drawing(
     sketch,
     use_local_model=False,
     incorrect_guesses=None,
+    return_metrics=False,
 ):
     base_prompt = "Analyze the intent and detail of the given drawing, then return only the name of the primary subject depicted in the drawing. Attend to the color(s) used as an indicator. Guess should be specific but reasonably guessable."
     img = extract_and_prepare_image(sketch)
     if img is None:
-        return "Sketchpad is empty"
+        return ("Sketchpad is empty", "") if return_metrics else "Sketchpad is empty"
 
     incorrect_guesses = incorrect_guesses or []
 
@@ -157,12 +149,15 @@ def process_drawing(
             }
         ]
         messages = append_incorrect_guesses(messages, base_prompt, incorrect_guesses)
-        return local_generate(messages, attempt=len(incorrect_guesses) + 1)
+        res = local_generate(messages, return_metrics=return_metrics)
+        if return_metrics:
+            return res if isinstance(res, tuple) else (res, "")
+        return res[0] if isinstance(res, tuple) else res
 
     # Use Space Secret HF_TOKEN for remote model
     token = os.environ.get("HF_TOKEN")
     if not token:
-        return "HF_TOKEN not found"
+        return ("HF_TOKEN not found", "") if return_metrics else "HF_TOKEN not found"
 
     data_url = image_to_data_url(img)
 
@@ -200,12 +195,11 @@ def process_drawing(
         except (AttributeError, TypeError):
             in_tokens, out_tokens = None, None
         
-        attempt = len(incorrect_guesses) + 1
-        log_inference_metrics("remote", REMOTE_MODEL, attempt, latency_ms, 0.0, in_tokens, out_tokens)
-        
-        return content.strip() if content else "Remote model returned an empty response."
-    except Exception as e:
-        return "Failed to connect to inference API"
+        guess = content.strip() if content else "Remote model returned an empty response."
+        metrics_md = format_metrics_markdown("remote", latency_ms, None, in_tokens, out_tokens)
+        return (guess, metrics_md) if return_metrics else guess
+    except Exception:
+        return ("Failed to connect to inference API", "") if return_metrics else "Failed to connect to inference API"
 
 def format_history_markdown(history, correct=False):
     if not history:
@@ -226,6 +220,7 @@ def make_initial_guess(sketch, use_local_model, history=None, last_drawing=None)
     if img is None:
         return (
             "Sketchpad is empty",
+            "",
             gr.update(visible=False),
             [],
             "",
@@ -237,14 +232,21 @@ def make_initial_guess(sketch, use_local_model, history=None, last_drawing=None)
 
     history_to_use = [] if drawing_changed else (history or [])
 
-    guess = process_drawing(
+    res = process_drawing(
         sketch,
         use_local_model=use_local_model,
         incorrect_guesses=history_to_use,
+        return_metrics=True,
     )
+    if isinstance(res, tuple):
+        guess, metrics_md = res
+    else:
+        guess, metrics_md = res, ""
+
     if is_error_response(guess):
         return (
             guess,
+            "",
             gr.update(visible=False),
             [],
             "",
@@ -254,6 +256,7 @@ def make_initial_guess(sketch, use_local_model, history=None, last_drawing=None)
     new_history = history_to_use + [guess]
     return (
         guess,
+        metrics_md,
         gr.update(visible=True),
         new_history,
         format_history_markdown(new_history, correct=False),
@@ -278,6 +281,7 @@ def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None):
     if img is None:
         return (
             "Sketchpad is empty",
+            "",
             gr.update(visible=False),
             [],
             "",
@@ -293,6 +297,7 @@ def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None):
         if not history:
             return (
                 "",
+                "",
                 gr.update(visible=False),
                 [],
                 "",
@@ -300,15 +305,21 @@ def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None):
             )
         history_to_use = history
 
-    new_guess = process_drawing(
+    res = process_drawing(
         sketch,
         use_local_model=use_local_model,
         incorrect_guesses=history_to_use,
+        return_metrics=True,
     )
-    
+    if isinstance(res, tuple):
+        new_guess, metrics_md = res
+    else:
+        new_guess, metrics_md = res, ""
+
     if is_error_response(new_guess):
         return (
             new_guess,
+            "",
             gr.update(visible=True if history_to_use else False),
             history_to_use,
             format_history_markdown(history_to_use, correct=False),
@@ -318,6 +329,7 @@ def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None):
     new_history = history_to_use + [new_guess]
     return (
         new_guess,
+        metrics_md,
         gr.update(visible=True),
         new_history,
         format_history_markdown(new_history, correct=False),
@@ -326,6 +338,7 @@ def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None):
 
 def reset_round(*args, **kwargs):
     return (
+        "",
         "",
         gr.update(visible=False),
         [],
@@ -363,6 +376,7 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
                 placeholder="The model's guess will appear here...",
                 interactive=False,
             )
+            metrics_output = gr.Markdown(value="", elem_id="metrics-output")
 
             with gr.Row(visible=False) as feedback_group:
                 correct_btn = gr.Button("Correct", variant="success", size="lg")
@@ -376,7 +390,7 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
     guess_btn.click(
         fn=make_initial_guess,
         inputs=[sketchpad, use_local_model, history_state, last_drawing_state],
-        outputs=[guess_output, feedback_group, history_state, history_output, last_drawing_state],
+        outputs=[guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state],
     )
 
     correct_btn.click(
@@ -388,17 +402,17 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
     incorrect_btn.click(
         fn=handle_incorrect,
         inputs=[sketchpad, use_local_model, history_state, last_drawing_state],
-        outputs=[guess_output, feedback_group, history_state, history_output, last_drawing_state],
+        outputs=[guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state],
     )
 
     sketchpad.clear(
         fn=reset_round,
-        outputs=[guess_output, feedback_group, history_state, history_output, last_drawing_state],
+        outputs=[guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state],
     )
 
     use_local_model.change(
         fn=reset_round,
-        outputs=[guess_output, feedback_group, history_state, history_output, last_drawing_state],
+        outputs=[guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state],
     )
 
     # Dedicated API endpoint for backward compatibility with E2E tests and client scripts
