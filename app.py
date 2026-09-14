@@ -15,6 +15,7 @@ from huggingface_hub import InferenceClient
 
 REMOTE_MODEL = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 LOCAL_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
+MAX_NEW_TOKENS = 64
 
 def format_metrics_markdown(latency_ms, in_tokens=None, out_tokens=None):
     lat_str = f"{round(latency_ms, 1)} ms" if isinstance(latency_ms, (int, float)) else "N/A"
@@ -42,7 +43,7 @@ except Exception:
 @gpu_decorator
 def local_generate(
     messages,
-    max_tokens=4096,
+    max_tokens=MAX_NEW_TOKENS,
     temperature=0.7,
     top_p=0.95,
     return_metrics=False,
@@ -85,7 +86,11 @@ def local_generate(
         return (err, "") if return_metrics else err
 
 def extract_and_prepare_image(sketch):
-    if not sketch or not sketch.get("composite"):
+    if sketch is None:
+        return None
+    if isinstance(sketch, Image.Image):
+        return sketch if sketch.mode == "RGB" else sketch.convert("RGB")
+    if not isinstance(sketch, dict) or not sketch.get("composite"):
         return None
     img = sketch["composite"].convert("RGBA")
     background = Image.new("RGBA", img.size, (255, 255, 255, 255))
@@ -176,7 +181,7 @@ def process_drawing(
         response = client.chat.completions.create(
             model=REMOTE_MODEL,
             messages=messages,
-            max_tokens=4096,
+            max_tokens=MAX_NEW_TOKENS,
         )
         latency_ms = (time.perf_counter() - t0) * 1000
 
@@ -209,7 +214,7 @@ def format_history_markdown(history, correct=False):
             lines.append(f"{i}. ~~{guess}~~ (Incorrect)")
     return "\n\n".join(lines)
 
-def make_initial_guess(sketch, use_local_model, history=None, last_drawing=None):
+def make_initial_guess(sketch, use_local_model, history=None, last_drawing=None, cached_image=None):
     img = extract_and_prepare_image(sketch)
     if img is None:
         return (
@@ -219,15 +224,16 @@ def make_initial_guess(sketch, use_local_model, history=None, last_drawing=None)
             [],
             "",
             None,
+            None,
         )
 
-    current_hash = get_drawing_hash(sketch)
+    current_hash = get_drawing_hash(img)
     drawing_changed = (last_drawing is None or current_hash != last_drawing)
 
     history_to_use = [] if drawing_changed else (history or [])
 
     res = process_drawing(
-        sketch,
+        img,
         use_local_model=use_local_model,
         incorrect_guesses=history_to_use,
         return_metrics=True,
@@ -255,6 +261,7 @@ def make_initial_guess(sketch, use_local_model, history=None, last_drawing=None)
         new_history,
         format_history_markdown(new_history, correct=False),
         current_hash,
+        img,
     )
 
 def handle_correct(history):
@@ -270,20 +277,25 @@ def handle_correct(history):
         format_history_markdown(history, correct=True),
     )
 
-def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None):
-    img = extract_and_prepare_image(sketch)
-    if img is None:
-        return (
-            "Sketchpad is empty",
-            "",
-            gr.update(visible=False),
-            [],
-            "",
-            None,
-        )
-
-    current_hash = get_drawing_hash(sketch)
-    drawing_changed = (last_drawing is None or current_hash != last_drawing)
+def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None, cached_image=None):
+    if cached_image is not None and last_drawing is not None:
+        img = cached_image
+        current_hash = last_drawing
+        drawing_changed = False
+    else:
+        img = extract_and_prepare_image(sketch)
+        if img is None:
+            return (
+                "Sketchpad is empty",
+                "",
+                gr.update(visible=False),
+                [],
+                "",
+                None,
+                None,
+            )
+        current_hash = get_drawing_hash(img)
+        drawing_changed = (last_drawing is None or current_hash != last_drawing)
 
     if drawing_changed:
         history_to_use = []
@@ -296,11 +308,12 @@ def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None):
                 [],
                 "",
                 current_hash,
+                img,
             )
         history_to_use = history
 
     res = process_drawing(
-        sketch,
+        img,
         use_local_model=use_local_model,
         incorrect_guesses=history_to_use,
         return_metrics=True,
@@ -318,6 +331,7 @@ def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None):
             history_to_use,
             format_history_markdown(history_to_use, correct=False),
             current_hash,
+            img,
         )
 
     new_history = history_to_use + [new_guess]
@@ -328,6 +342,7 @@ def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None):
         new_history,
         format_history_markdown(new_history, correct=False),
         current_hash,
+        img,
     )
 
 def reset_round(*args, **kwargs):
@@ -337,6 +352,7 @@ def reset_round(*args, **kwargs):
         gr.update(visible=False),
         [],
         "",
+        None,
         None,
     )
 
@@ -379,12 +395,13 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
             history_output = gr.Markdown(label="Guess History")
             history_state = gr.State([])
             last_drawing_state = gr.State(None)
+            cached_image_state = gr.State(None)
 
     # Event handlers
     guess_btn.click(
         fn=make_initial_guess,
-        inputs=[sketchpad, use_local_model, history_state, last_drawing_state],
-        outputs=[guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state],
+        inputs=[sketchpad, use_local_model, history_state, last_drawing_state, cached_image_state],
+        outputs=[guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state, cached_image_state],
     )
 
     correct_btn.click(
@@ -395,18 +412,18 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
 
     incorrect_btn.click(
         fn=handle_incorrect,
-        inputs=[sketchpad, use_local_model, history_state, last_drawing_state],
-        outputs=[guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state],
+        inputs=[sketchpad, use_local_model, history_state, last_drawing_state, cached_image_state],
+        outputs=[guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state, cached_image_state],
     )
 
     sketchpad.clear(
         fn=reset_round,
-        outputs=[guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state],
+        outputs=[guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state, cached_image_state],
     )
 
     use_local_model.change(
         fn=reset_round,
-        outputs=[guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state],
+        outputs=[guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state, cached_image_state],
     )
 
     # Dedicated API endpoint for backward compatibility with E2E tests and client scripts

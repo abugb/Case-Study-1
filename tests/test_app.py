@@ -180,7 +180,7 @@ class TestLocalGenerate:
 class TestFeedbackLoop:
     def test_make_initial_guess_empty(self):
         """Submitting empty canvas updates guess and hides feedback buttons."""
-        guess, metrics_md, feedback_update, history, hist_md, last_drawing = make_initial_guess(None, False)
+        guess, metrics_md, feedback_update, history, hist_md, last_drawing, cached_image = make_initial_guess(None, False)
         assert guess == "Sketchpad is empty"
         assert metrics_md == ""
         assert feedback_update.get("visible") is False
@@ -192,7 +192,7 @@ class TestFeedbackLoop:
         """Successful guess reveals feedback buttons, initializes history, and records drawing hash."""
         with patch("app.process_drawing", return_value="A Bicycle"):
             dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
-            guess, metrics_md, feedback_update, history, hist_md, last_drawing = make_initial_guess(dummy_sketch, False)
+            guess, metrics_md, feedback_update, history, hist_md, last_drawing, cached_image = make_initial_guess(dummy_sketch, False)
 
             assert guess == "A Bicycle"
             assert feedback_update.get("visible") is True
@@ -209,15 +209,16 @@ class TestFeedbackLoop:
         hash2 = get_drawing_hash(sketch2)
 
         with patch("app.process_drawing", return_value="A Tree") as mock_proc:
-            guess, metrics_md, feedback_update, new_history, hist_md, last_drawing = make_initial_guess(
+            guess, metrics_md, feedback_update, new_history, hist_md, last_drawing, cached_image = make_initial_guess(
                 sketch2, False, history=["A Cat", "A Dog"], last_drawing=hash1
             )
             assert guess == "A Tree"
             assert new_history == ["A Tree"]
             assert last_drawing == hash2
-            mock_proc.assert_called_once_with(
-                sketch2, use_local_model=False, incorrect_guesses=[], return_metrics=True
-            )
+            mock_proc.assert_called_once()
+            assert mock_proc.call_args[1].get("use_local_model") is False
+            assert mock_proc.call_args[1].get("incorrect_guesses") == []
+            assert mock_proc.call_args[1].get("return_metrics") is True
 
     def test_handle_correct(self):
         """Indicating correct hides feedback buttons and marks last item as correct."""
@@ -230,7 +231,7 @@ class TestFeedbackLoop:
         dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
         drawing_hash = get_drawing_hash(dummy_sketch)
         with patch("app.process_drawing", return_value="A Leopard") as mock_proc:
-            guess, metrics_md, feedback_update, new_history, hist_md, last_drawing = handle_incorrect(
+            guess, metrics_md, feedback_update, new_history, hist_md, last_drawing, cached_image = handle_incorrect(
                 dummy_sketch, False, ["A Cat", "A Tiger"], last_drawing=drawing_hash
             )
             assert guess == "A Leopard"
@@ -239,9 +240,10 @@ class TestFeedbackLoop:
             assert "~~A Cat~~ (Incorrect)" in hist_md
             assert "~~A Tiger~~ (Incorrect)" in hist_md
             assert "**A Leopard** (Current Guess)" in hist_md
-            mock_proc.assert_called_once_with(
-                dummy_sketch, use_local_model=False, incorrect_guesses=["A Cat", "A Tiger"], return_metrics=True
-            )
+            mock_proc.assert_called_once()
+            assert mock_proc.call_args[1].get("use_local_model") is False
+            assert mock_proc.call_args[1].get("incorrect_guesses") == ["A Cat", "A Tiger"]
+            assert mock_proc.call_args[1].get("return_metrics") is True
             assert last_drawing == drawing_hash
 
     def test_handle_incorrect_changed_drawing_resets_history(self):
@@ -253,21 +255,22 @@ class TestFeedbackLoop:
         hash2 = get_drawing_hash(sketch2)
 
         with patch("app.process_drawing", return_value="A Leopard") as mock_proc:
-            guess, metrics_md, feedback_update, new_history, hist_md, last_drawing = handle_incorrect(
+            guess, metrics_md, feedback_update, new_history, hist_md, last_drawing, cached_image = handle_incorrect(
                 sketch2, False, ["A Cat", "A Tiger"], last_drawing=hash1
             )
             assert guess == "A Leopard"
             assert feedback_update.get("visible") is True
             assert new_history == ["A Leopard"]
             assert "**A Leopard** (Current Guess)" in hist_md
-            mock_proc.assert_called_once_with(
-                sketch2, use_local_model=False, incorrect_guesses=[], return_metrics=True
-            )
+            mock_proc.assert_called_once()
+            assert mock_proc.call_args[1].get("use_local_model") is False
+            assert mock_proc.call_args[1].get("incorrect_guesses") == []
+            assert mock_proc.call_args[1].get("return_metrics") is True
             assert last_drawing == hash2
 
     def test_reset_round(self):
         """Resetting round clears guess, hides feedback, and resets drawing hash."""
-        guess, metrics_md, feedback_update, history, hist_md, last_drawing = reset_round()
+        guess, metrics_md, feedback_update, history, hist_md, last_drawing, cached_image = reset_round()
         assert guess == ""
         assert metrics_md == ""
         assert feedback_update.get("visible") is False
@@ -385,3 +388,26 @@ class TestInferenceMetricsUI:
             guess, metrics_md = process_drawing(dummy_sketch, use_local_model=True, return_metrics=True)
             assert guess == "A Dog"
             assert "50.0 ms" in metrics_md
+
+    def test_extract_and_prepare_image_passthrough(self):
+        """Passing an already preprocessed Image.Image should return it directly."""
+        img = Image.new("RGB", (10, 10), (255, 255, 255))
+        result = extract_and_prepare_image(img)
+        assert result is img
+
+    def test_handle_incorrect_reuses_cached_image(self):
+        """When cached_image is provided, handle_incorrect should not re-extract the sketch."""
+        sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
+        cached_img = Image.new("RGB", (10, 10), (255, 255, 255))
+        with patch("app.extract_and_prepare_image") as mock_extract:
+            with patch("app.process_drawing", return_value="A Leopard"):
+                handle_incorrect(
+                    sketch, False, ["A Cat"], last_drawing="dummyhash", cached_image=cached_img
+                )
+                mock_extract.assert_not_called()
+
+class TestTokenConfiguration:
+    def test_max_tokens_configuration(self):
+        """Verify MAX_NEW_TOKENS is 64."""
+        from app import MAX_NEW_TOKENS
+        assert MAX_NEW_TOKENS == 64
