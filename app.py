@@ -24,11 +24,8 @@ def format_metrics_markdown(latency_ms, in_tokens=None, out_tokens=None):
     out_str = str(out_tokens) if isinstance(out_tokens, int) else "N/A"
     return f"**Latency:** {lat_str} &nbsp;|&nbsp; **Tokens:** {in_str} in / {out_str} out"
 
-try:
-    import spaces
-    gpu_decorator = spaces.GPU
-except ImportError:
-    gpu_decorator = lambda fn: fn
+import spaces
+gpu_decorator = spaces.GPU
 
 try:
     pipe = pipeline(
@@ -158,10 +155,10 @@ def process_drawing(
             res = local_generate(messages, return_metrics=True)
             guess, metrics = res if isinstance(res, tuple) else (res, "")
         except Exception:
-            guess, metrics = "⚠️ Local Model Error: generation unavailable.", ""
+            guess, metrics = "Local Model Error: generation unavailable.", ""
         if is_error_response(guess):
             if reason:
-                guess = f"⚠️ Both models unavailable. Remote: {reason}. {guess}"
+                guess = f"Both models unavailable. Remote: {reason}. {guess}"
             status = "**Model:** None (generation failed)"
         else:
             status = f"**Model:** Local (`{LOCAL_MODEL}`)"
@@ -198,6 +195,7 @@ def process_drawing(
         latency_ms = (time.perf_counter() - t0) * 1000
         choice = response.choices[0]
         content = choice.message.content
+        # used AI to figure out error handling
         try:
             in_tokens = response.usage.prompt_tokens
             out_tokens = response.usage.completion_tokens
