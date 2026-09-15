@@ -16,6 +16,7 @@ from huggingface_hub import InferenceClient
 REMOTE_MODEL = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 LOCAL_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 MAX_NEW_TOKENS = 64
+REMOTE_TIMEOUT_SECONDS = 20
 
 def format_metrics_markdown(latency_ms, in_tokens=None, out_tokens=None):
     lat_str = f"{round(latency_ms, 1)} ms" if isinstance(latency_ms, (int, float)) else "N/A"
@@ -48,6 +49,8 @@ def local_generate(
     return_metrics=False,
 ):
     try:
+        if pipe is None:
+            raise RuntimeError("Local model is not loaded; check CUDA and model initialization.")
         if torch is not None and torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
         t0 = time.perf_counter()
@@ -62,8 +65,10 @@ def local_generate(
         )
         latency_ms = (time.perf_counter() - t0) * 1000
         if not outputs:
-            return ("Model produced no output.", "") if return_metrics else "Model produced no output."
+            raise RuntimeError("Model produced no output.")
         generated_text = outputs[0]["generated_text"][-1]["content"].strip()
+        if not generated_text:
+            raise RuntimeError("Model produced no output.")
         in_tokens, out_tokens = None, None
         if pipe and hasattr(pipe, "tokenizer") and pipe.tokenizer:
             try:
@@ -137,7 +142,7 @@ def process_drawing(
         return ("Sketchpad is empty", "") if return_metrics else "Sketchpad is empty"
     incorrect_guesses = incorrect_guesses or []
 
-    if use_local_model:
+    def run_local(reason=None):
         messages = [
             {"role": "system", "content": base_prompt},
             {
@@ -149,14 +154,27 @@ def process_drawing(
             },
         ]
         messages = append_incorrect_guesses(messages, base_prompt, incorrect_guesses)
-        res = local_generate(messages, return_metrics=return_metrics)
-        if return_metrics and not isinstance(res, tuple):
-            res = (res, "")
-        return res
+        try:
+            res = local_generate(messages, return_metrics=True)
+            guess, metrics = res if isinstance(res, tuple) else (res, "")
+        except Exception:
+            guess, metrics = "⚠️ Local Model Error: generation unavailable.", ""
+        if is_error_response(guess):
+            if reason:
+                guess = f"⚠️ Both models unavailable. Remote: {reason}. {guess}"
+            status = "**Model:** None (generation failed)"
+        else:
+            status = f"**Model:** Local (`{LOCAL_MODEL}`)"
+        if reason:
+            status += f" | **Automatic fallback:** {reason}"
+        return (guess, f"{status}\n\n{metrics}") if return_metrics else guess
+
+    if use_local_model:
+        return run_local()
 
     token = os.environ.get("HF_TOKEN")
     if not token:
-        return ("HF_TOKEN not found", "") if return_metrics else "HF_TOKEN not found"
+        return run_local("HF_TOKEN not found")
 
     data_url = image_to_data_url(img)
     messages = [
@@ -170,7 +188,7 @@ def process_drawing(
     ]
     messages = append_incorrect_guesses(messages, base_prompt, incorrect_guesses)
     try:
-        client = InferenceClient(token=token, model=REMOTE_MODEL)
+        client = InferenceClient(token=token, model=REMOTE_MODEL, timeout=REMOTE_TIMEOUT_SECONDS)
         t0 = time.perf_counter()
         response = client.chat.completions.create(
             model=REMOTE_MODEL,
@@ -185,11 +203,16 @@ def process_drawing(
             out_tokens = response.usage.completion_tokens
         except (AttributeError, TypeError):
             in_tokens, out_tokens = None, None
-        guess = content.strip() if content else "Remote model returned an empty response."
+        if not content or not content.strip():
+            return run_local("Remote model returned an empty response")
+        guess = content.strip()
         metrics_md = format_metrics_markdown(latency_ms, in_tokens, out_tokens)
+        metrics_md = f"**Model:** Remote (`{REMOTE_MODEL}`)\n\n{metrics_md}"
         return (guess, metrics_md) if return_metrics else guess
-    except Exception:
-        return ("Failed to connect to inference API", "") if return_metrics else "Failed to connect to inference API"
+    except Exception as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        reason = f"Remote API HTTP {status}" if isinstance(status, int) else "Remote API unavailable or timed out"
+        return run_local(reason)
 
 def format_history_markdown(history, correct=False):
     if not history:
@@ -221,7 +244,7 @@ def make_initial_guess(sketch, use_local_model, history=None, last_drawing=None,
     guess, metrics_md = res
 
     if is_error_response(guess):
-        return _feedback(guess, "", False, [], "", None, None)
+        return _feedback(guess, metrics_md, False, [], "", None, None)
 
     new_history = history_to_use + [guess]
     return _feedback(guess, metrics_md, True, new_history, format_history_markdown(new_history, correct=False), current_hash, img)
@@ -257,7 +280,7 @@ def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None, c
     new_guess, metrics_md = res
 
     if is_error_response(new_guess):
-        return _feedback(new_guess, "", bool(history_to_use), history_to_use, format_history_markdown(history_to_use, correct=False), current_hash, img)
+        return _feedback(new_guess, metrics_md, bool(history_to_use), history_to_use, format_history_markdown(history_to_use, correct=False), current_hash, img)
 
     new_history = history_to_use + [new_guess]
     return _feedback(new_guess, metrics_md, True, new_history, format_history_markdown(new_history, correct=False), current_hash, img)

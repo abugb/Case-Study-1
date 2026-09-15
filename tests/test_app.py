@@ -73,11 +73,14 @@ class TestProcessDrawing:
         assert process_drawing({"composite": None}) == "Sketchpad is empty"
 
     def test_remote_model_missing_hf_token(self, monkeypatch):
-        """When HF_TOKEN is missing, return 'HF_TOKEN not found'."""
+        """Missing credentials automatically route to local generation."""
         monkeypatch.delenv("HF_TOKEN", raising=False)
         dummy_sketch = {"composite": Image.new("RGBA", (10, 10), (0, 0, 0, 255))}
-        result = process_drawing(dummy_sketch, use_local_model=False)
-        assert result == "HF_TOKEN not found"
+        with patch("app.local_generate", return_value=("A Dog", "")) as local:
+            result, metrics = process_drawing(dummy_sketch, return_metrics=True)
+        assert result == "A Dog"
+        assert "HF_TOKEN not found" in metrics
+        local.assert_called_once()
 
     def test_remote_model_success(self, monkeypatch):
         """When HF_TOKEN is set and client returns a guess, process_drawing returns it."""
@@ -130,7 +133,7 @@ class TestProcessDrawing:
 
         with patch("app.InferenceClient", side_effect=Exception("Connection timed out")):
             result = process_drawing(dummy_sketch, use_local_model=False)
-            assert result == "Failed to connect to inference API"
+            assert result.startswith("⚠️ Both models unavailable.")
 
     def test_local_model_dispatch(self):
         """When use_local_model is True, dispatch to local_generate."""
@@ -167,7 +170,8 @@ class TestLocalGenerate:
         mock_pipe = MagicMock(return_value=[])
         monkeypatch.setattr("app.pipe", mock_pipe)
         result = local_generate([{"role": "user", "content": "test"}])
-        assert result == "Model produced no output."
+        assert is_error_response(result)
+        assert "Model produced no output." in result
 
     def test_local_generate_exception(self, monkeypatch):
         """When pipe raises an exception, return error message."""
