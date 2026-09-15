@@ -77,7 +77,7 @@ def local_generate(
         metrics_md = format_metrics_markdown(latency_ms, in_tokens, out_tokens)
         return (generated_text, metrics_md) if return_metrics else generated_text
     except Exception as e:
-        err = f"⚠️ Local Model Error: {e}"
+        err = f"Local Model Error: {e}"
         return (err, "") if return_metrics else err
 
 def extract_and_prepare_image(sketch):
@@ -114,7 +114,7 @@ def append_incorrect_guesses(messages, base_prompt, incorrect_guesses):
         previous_list = ", ".join(f'"{g}"' for g in incorrect_guesses[: idx + 1])
         messages.append({
             "role": "user",
-            "content": f"{base_prompt} The following answers are incorrect: {previous_list}.",
+            "content": f"{base_prompt} The following answers are incorrect, do not guess close variations of them: {previous_list}.",
         })
     return messages
 
@@ -134,7 +134,7 @@ def process_drawing(
     incorrect_guesses=None,
     return_metrics=False,
 ):
-    base_prompt = "Analyze the intent and detail of the given drawing, then return only the name of the primary subject depicted in the drawing. Attend to the color(s) used as an indicator. Guess should be specific but reasonably guessable."
+    base_prompt = "Analyze the given drawing, including its color and features. Then return only the name of the subject depicted in the drawing."
     img = extract_and_prepare_image(sketch)
     if img is None:
         return ("Sketchpad is empty", "") if return_metrics else "Sketchpad is empty"
