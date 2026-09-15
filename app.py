@@ -17,7 +17,7 @@ from huggingface_hub import InferenceClient
 REMOTE_MODEL = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 LOCAL_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 MAX_NEW_TOKENS = 64
-REMOTE_TIMEOUT_SECONDS = 5
+REMOTE_TIMEOUT_SECONDS = 0.1
 
 def format_metrics_markdown(latency_ms, in_tokens=None, out_tokens=None):
     lat_str = f"{round(latency_ms, 1)} ms" if isinstance(latency_ms, (int, float)) else "N/A"
