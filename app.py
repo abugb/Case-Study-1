@@ -114,7 +114,7 @@ def append_incorrect_guesses(messages, base_prompt, incorrect_guesses):
         previous_list = ", ".join(f'"{g}"' for g in incorrect_guesses[: idx + 1])
         messages.append({
             "role": "user",
-            "content": f"{base_prompt} The following answers are incorrect, do not guess close variations of them: {previous_list}.",
+            "content": f"{base_prompt} The following answers are incorrect, do not guess close variations of them unless all other possibilites have been exhausted: {previous_list}.",
         })
     return messages
 
@@ -134,7 +134,7 @@ def process_drawing(
     incorrect_guesses=None,
     return_metrics=False,
 ):
-    base_prompt = "Analyze the given drawing, including its color and features. Then return only the name of the subject depicted in the drawing."
+    base_prompt = "Analyze the given drawing, including its color and features. Then return only the name of the subject the user attempted to draw."
     img = extract_and_prepare_image(sketch)
     if img is None:
         return ("Sketchpad is empty", "") if return_metrics else "Sketchpad is empty"
