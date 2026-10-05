@@ -64,10 +64,10 @@ def local_generate(messages):
             )
         latency_ms = (time.perf_counter() - t0) * 1000
         if not outputs:
-            raise RuntimeError("Model produced no output.")
+            raise RuntimeError("Model returned no generated messages.")
         generated_text = outputs[0]["generated_text"][-1]["content"].strip()
         if not generated_text:
-            raise RuntimeError("Model produced no output.")
+            raise RuntimeError("Model returned a blank answer.")
         out_tokens = len(pipe.tokenizer.encode(generated_text, add_special_tokens=False))
         # The pipeline does not expose its image/prompt token count.
         return generated_text, format_metrics_markdown(latency_ms, out_tokens=out_tokens)
@@ -110,6 +110,16 @@ def append_incorrect_guesses(messages, base_prompt, incorrect_guesses):
             "content": f"{base_prompt} The following answers are incorrect: {previous_list}. Do not guess close variations of them unless all other possibilities have been exhausted.",
         })
 
+
+def add_local_guess_feedback(messages, incorrect_guesses):
+    if not incorrect_guesses:
+        return
+    text_block = next(
+        block for block in messages[-1]["content"] if block.get("type") == "text"
+    )
+    rejected = ", ".join(f'"{guess}"' for guess in incorrect_guesses)
+    text_block["text"] += f" Previous guesses that were incorrect: {rejected}. Choose a different subject."
+
 def _drawing_info(sketch, last_hash):
     img = extract_and_prepare_image(sketch)
     if img is None:
@@ -144,7 +154,7 @@ def process_drawing(
                 ],
             },
         ]
-        append_incorrect_guesses(messages, base_prompt, incorrect_guesses)
+        add_local_guess_feedback(messages, incorrect_guesses)
         guess, metrics = local_generate(messages)
         if is_error_response(guess):
             if reason:

@@ -30,7 +30,8 @@ def test_failover_and_recovery(app, monkeypatch, remote_client, drawing, failure
     assert f"Automatic fallback:** {reason}" in metrics
     messages = local.call_args.args[0]
     assert messages[1]["content"][0]["image"] is drawing
-    assert messages[2]["content"] == "A Flower"
+    assert len(messages) == 2
+    assert '"A Flower"' in messages[1]["content"][1]["text"]
     assert app.InferenceClient.call_args.kwargs["timeout"] == app.REMOTE_TIMEOUT_SECONDS
 
     guess, metrics = app.process_drawing(drawing, return_metrics=True)

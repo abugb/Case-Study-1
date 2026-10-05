@@ -109,16 +109,19 @@ def test_manual_local_request_preserves_history(app, monkeypatch, drawing, with_
     remote.assert_not_called()
     messages = local.call_args.args[0]
     assert messages[1]["content"][0]["image"] is drawing
-    assert messages[2]["content"] == "A Dog"
-    assert messages[4]["content"] == "A Wolf"
-    assert '"A Dog", "A Wolf"' in messages[5]["content"]
+    assert len(messages) == 2
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "user"
+    assert messages[1]["content"][0]["image"] is drawing
+    assert '"A Dog", "A Wolf"' in messages[1]["content"][1]["text"]
 
 
 @pytest.mark.parametrize("output", [[], [{"generated_text": [{"content": "   "}]}]])
 def test_empty_local_output_is_an_error(app, monkeypatch, output):
     monkeypatch.setattr(app, "pipe", Mock(return_value=output))
     guess, metrics = app.local_generate([])
-    assert guess == "⚠️ Local Model Error: Model produced no output."
+    assert guess.startswith("⚠️ Local Model Error:")
+    assert "generated messages" in guess or "blank answer" in guess
     assert metrics == ""
 
 
