@@ -37,13 +37,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest gradio_client huggingface_hub pillow
 
-      - name: Run Hugging Face Space E2E Tests (ZeroGPU)
+      - name: Run Gradio endpoint tests
+        timeout-minutes: 10
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_SPACE_ID: abugb/Case-Study-1
-          SPACE_TIMEOUT: "600"
+          GRADIO_TEST_URL: abugb/Case-Study-1
         run: |
-          python -m pytest -v tests/test_space_e2e.py
+          python -m pytest -v -m e2e tests/test_endpoint.py
 
   notify-discord:
     needs: [sync, test-on-huggingface]
@@ -55,7 +55,7 @@ jobs:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           if [ "${{ needs.sync.result }}" = "success" ] && [ "${{ needs.test-on-huggingface.result }}" = "success" ]; then
-            STATUS_MSG="🚀 **Deployment & ZeroGPU E2E Tests Succeeded!**"
+            STATUS_MSG="🚀 **Deployment & Endpoint Tests Succeeded!**"
           else
             STATUS_MSG="⚠️ **Deployment or Test Alert**"
           fi
@@ -69,7 +69,7 @@ jobs:
             --arg sha "${{ github.sha }}" \
             --arg sync_res "${{ needs.sync.result }}" \
             --arg test_res "${{ needs.test-on-huggingface.result }}" \
-            '{content: "\($title)\n• **Actor**: `\($actor)`\n• **Branch**: `\($ref)`\n• **Commit**: [\($sha[:7])](\($commit_url))\n• **Sync**: `\($sync_res)`\n• **ZeroGPU E2E Tests**: `\($test_res)`\n• **Space**: https://huggingface.co/spaces/abugb/Case-Study-1"}'
+            '{content: "\($title)\n• **Actor**: `\($actor)`\n• **Branch**: `\($ref)`\n• **Commit**: [\($sha[:7])](\($commit_url))\n• **Sync**: `\($sync_res)`\n• **Endpoint Tests**: `\($test_res)`\n• **Space**: https://huggingface.co/spaces/abugb/Case-Study-1"}'
           )
 
           curl -H "Content-Type: application/json" \
