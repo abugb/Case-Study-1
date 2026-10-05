@@ -127,7 +127,7 @@ def process_drawing(
     return_metrics=False,
 ):
     token = require_hf_token()
-    base_prompt = "Analyze the given drawing, including its color and features. Then return only the name of the subject the user attempted to draw."
+    base_prompt = "Identify the subject the user intended to draw. Reply with only your guess as the subject's name. Do not describe the image or add colors, features, or an explanation."
     img = extract_and_prepare_image(sketch)
     if img is None:
         return ("Sketchpad is empty", "") if return_metrics else "Sketchpad is empty"
