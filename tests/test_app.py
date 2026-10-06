@@ -21,6 +21,7 @@ import sys
 from unittest.mock import Mock
 sys.modules['torch'] = Mock()
 sys.modules['transformers'] = Mock()
+sys.modules['dotenv'] = Mock()
 runpy.run_path(sys.argv[1], run_name='__main__')
 """
     result = subprocess.run(
@@ -29,6 +30,29 @@ runpy.run_path(sys.argv[1], run_name='__main__')
     )
     assert result.returncode != 0
     assert "HF_TOKEN is required" in result.stderr
+
+
+def test_startup_loads_hf_token_from_dotenv(tmp_path):
+    source = Path(__file__).resolve().parents[1] / "app.py"
+    (tmp_path / "app.py").write_text(source.read_text())
+    (tmp_path / ".env").write_text("HF_TOKEN=dotenv-test-token\n")
+    env = os.environ.copy()
+    env.pop("HF_TOKEN", None)
+    code = """
+import os
+import runpy
+import sys
+from unittest.mock import Mock
+sys.modules['torch'] = Mock()
+sys.modules['transformers'] = Mock()
+runpy.run_path(sys.argv[1])
+assert os.environ['HF_TOKEN'] == 'dotenv-test-token'
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path / "app.py")],
+        env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("token", [None, "", "   "])
