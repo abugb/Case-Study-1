@@ -1,5 +1,3 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-
 numpy
 torch
 torchvision
@@ -9,4 +7,3 @@ num2words
 accelerate
 gradio>=6.26,<7
 Pillow
-python-dotenv

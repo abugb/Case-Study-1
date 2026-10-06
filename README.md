@@ -17,11 +17,11 @@ From the local checkout, run `bash CS2/connect.sh` and keep the SSH session
 open. The script forwards local port 8013 to port 8013 in the container. In that session:
 
 ```bash
-cd ~/cs553-product
-source .venv/bin/activate
+cd ~/Case-Study-1
+source venv/bin/activate
 python -m pip install -r requirements.txt
-# Required: place HF_TOKEN in .env beside app.py (or export it in this shell).
-# python-dotenv loads .env when the app starts.
+# Required: export HF_TOKEN in this shell before starting the app.
+# The app reads environment variables; it does not automatically load .env.
 python app.py
 ```
 

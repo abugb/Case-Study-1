@@ -5,7 +5,6 @@ import os
 import time
 from io import BytesIO
 from threading import Lock
-from dotenv import load_dotenv
 from PIL import Image
 
 import gradio as gr
@@ -17,8 +16,6 @@ REMOTE_MODEL = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 LOCAL_MODEL = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
 MAX_NEW_TOKENS = 64
 REMOTE_TIMEOUT_SECONDS = 5
-
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 def require_hf_token():
     token = os.environ.get("HF_TOKEN", "").strip()
