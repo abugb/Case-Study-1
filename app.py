@@ -4,8 +4,10 @@ import logging
 import os
 import time
 from io import BytesIO
+from pathlib import Path
 from threading import Lock
 from PIL import Image
+from dotenv import load_dotenv
 
 import gradio as gr
 import torch
@@ -25,6 +27,7 @@ def require_hf_token():
 
 
 # Configuration errors must stop startup, not silently select the local model.
+load_dotenv(Path(__file__).resolve().with_name(".env"), override=False)
 require_hf_token()
 
 def format_metrics_markdown(latency_ms, in_tokens=None, out_tokens=None):

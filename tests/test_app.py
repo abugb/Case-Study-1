@@ -11,9 +11,12 @@ from PIL import Image
 import pytest
 
 
-def test_startup_requires_hf_token():
+def test_startup_requires_hf_token(tmp_path):
     env = os.environ.copy()
     env.pop("HF_TOKEN", None)
+    # Isolate startup from the developer's real .env file.
+    app_path = tmp_path / "app.py"
+    app_path.write_text((Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8"), encoding="utf-8")
     # Exercise startup in a fresh process without needing ML dependencies.
     code = """
 import runpy
@@ -24,11 +27,39 @@ sys.modules['transformers'] = Mock()
 runpy.run_path(sys.argv[1], run_name='__main__')
 """
     result = subprocess.run(
-        [sys.executable, "-c", code, str(Path(__file__).resolve().parents[1] / "app.py")],
+        [sys.executable, "-c", code, str(app_path)],
         env=env, capture_output=True, text=True, timeout=30,
     )
     assert result.returncode != 0
     assert "HF_TOKEN is required" in result.stderr
+
+
+@pytest.mark.parametrize("environment_token", [None, "environment-test-token"])
+def test_startup_loads_adjacent_dotenv_from_another_directory(tmp_path, environment_token):
+    app_dir = tmp_path / "product"
+    app_dir.mkdir()
+    app_path = app_dir / "app.py"
+    app_path.write_text((Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8"), encoding="utf-8")
+    (app_dir / ".env").write_text("HF_TOKEN=file-test-token\n", encoding="utf-8")
+    env = os.environ.copy()
+    env.pop("HF_TOKEN", None)
+    env.pop("PYTHON_DOTENV_DISABLED", None)
+    if environment_token is not None:
+        env["HF_TOKEN"] = environment_token
+    code = """
+import runpy
+import sys
+from unittest.mock import Mock
+sys.modules['torch'] = Mock()
+sys.modules['transformers'] = Mock()
+app = runpy.run_path(sys.argv[1], run_name='dotenv_test')
+assert app['require_hf_token']() == sys.argv[2]
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(app_path), environment_token or "file-test-token"],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("token", [None, "", "   "])

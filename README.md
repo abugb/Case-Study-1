@@ -20,10 +20,14 @@ open. The script forwards local port 8013 to port 8013 in the container. In that
 cd ~/Case-Study-1
 source venv/bin/activate
 python -m pip install -r requirements.txt
-# Required: export HF_TOKEN in this shell before starting the app.
-# The app reads environment variables; it does not automatically load .env.
+# Set HF_TOKEN in .env beside app.py, or export it in this shell.
+# An existing environment variable takes precedence over .env.
 python app.py
 ```
+
+`deploy.sh` creates a private `tmp/.env` with only `HF_TOKEN` and copies it
+to `~/Case-Study-1/.env` on the VM. The application code comes from the
+`Case-Study-2` branch on GitHub.
 
 Open http://localhost:8013 on your own computer. Gradio defaults to port 8013
 (overridable with `GRADIO_SERVER_PORT`). Hosted inference requires an HF_TOKEN
