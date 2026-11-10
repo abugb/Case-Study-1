@@ -4,3 +4,67 @@ agent_handoff.md
 .vscode
 __pycache__/
 .pytest_cache/
+
+# Case Study 3 exclusions
+# Credentials and machine-specific account configuration
+.env
+.env.*
+*.env
+!.env.example
+!.env.sample
+.ssh/
+.aws/
+ngrok.yml
+cs3-key
+cs3-key.pub
+*-key
+*-key.pub
+id_rsa*
+id_ed25519*
+*.pem
+*.key
+*.ppk
+*.p12
+*.pfx
+
+# Local SSH instructions and instructor-provided assignment handout
+/command.md
+/CSDS_553_Case_Study_3.pdf
+
+# Collected monitoring data and generated analysis artifacts
+evidence/
+analysis/
+/cs3-analysis-bundle.txt
+
+# Temporary files, caches, local Python environments, and runtime logs
+tmp/
+.cache/
+venv/
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.py[cod]
+*.log
+nohup.out
+*.pid
+*.db
+*.db-wal
+*.db-shm
+
+# Downloaded tunnel executables and image archives
+ngrok
+ngrok.exe
+ngrok.tgz
+cloudflared
+cloudflared.exe
+cloudflared-linux-amd64
+my_docker.tar
+
+# Local editor and operating-system metadata
+.vscode/
+.DS_Store
+Thumbs.db
+
+AGENTS.md

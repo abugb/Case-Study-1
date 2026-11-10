@@ -10,3 +10,4 @@ accelerate
 gradio>=6.26,<7
 Pillow
 python-dotenv
+prometheus-client>=0.21,<1

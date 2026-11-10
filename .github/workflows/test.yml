@@ -26,8 +26,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest 'gradio>=6.26,<7' pillow huggingface_hub python-dotenv
+          pip install pytest 'gradio>=6.26,<7' pillow huggingface_hub python-dotenv 'prometheus-client>=0.21,<1'
 
       - name: Run unit tests
         run: |
           python -m pytest -v -m "not e2e"
+          python -m unittest discover -s . -p test_metrics.py -v

@@ -1,0 +1,11 @@
+version: 3
+
+agent:
+  web_addr: 127.0.0.1:13008
+
+tunnels:
+  product:
+    domain: haggler-eatery-autopilot.ngrok-free.dev
+    proto: http
+    addr: http://127.0.0.1:13001
+    schemes: [https]

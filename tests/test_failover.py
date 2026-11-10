@@ -50,7 +50,7 @@ def test_both_unavailable_keeps_errors_out_of_history(app, monkeypatch, drawing)
     assert "Weights could not be loaded" in result[0]
     assert "None (generation failed)" in result[1]
     assert not result[2]["visible"]
-    assert result[3:] == ([], "", None, None)
+    assert result[3:] == ([], "", None, None, None)
 
 
 def test_remote_response_without_usage_does_not_trigger_fallback(app, monkeypatch, remote_client, drawing):

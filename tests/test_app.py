@@ -181,7 +181,7 @@ def test_history_tracks_the_submitted_drawing(app, monkeypatch, drawing, handler
     process = Mock(return_value=("A Tree", "metrics"))
     monkeypatch.setattr(app, "process_drawing", process)
     result = getattr(app, handler)(drawing, False, previous, previous_hash)
-    guess, metrics, feedback, history, markdown, current_hash, cached = result
+    guess, metrics, feedback, history, markdown, current_hash, cached, backend = result
     expected_previous = [] if changed else previous
     assert (guess, metrics) == ("A Tree", "metrics")
     assert feedback["visible"]
@@ -210,7 +210,8 @@ def test_failed_retry_preserves_history(app, monkeypatch, drawing):
 
 
 def test_correct_feedback_marks_last_guess(app):
-    feedback, history, markdown = app.handle_correct(["A Cat", "A Tree"])
+    feedback, history, markdown, backend = app.handle_correct(["A Cat", "A Tree"])
+    assert backend is None
     assert not feedback["visible"]
     assert history == ["A Cat", "A Tree"]
     assert "~~A Cat~~ (Incorrect)" in markdown
@@ -221,7 +222,7 @@ def test_empty_submission_and_reset_clear_round(app):
     for result in (app.make_initial_guess(None, False), app.handle_incorrect(None, False), app.reset_round()):
         assert not result[2]["visible"]
         assert result[1] == ""
-        assert result[3:] == ([], "", None, None)
+        assert result[3:] == ([], "", None, None, None)
 
 
 def test_gradio_endpoint_and_reset_events_are_wired(app):

@@ -3,6 +3,8 @@ import hashlib
 import logging
 import os
 import time
+from contextlib import contextmanager
+from functools import wraps
 from io import BytesIO
 from pathlib import Path
 from threading import Lock
@@ -13,6 +15,76 @@ import gradio as gr
 import torch
 from transformers import pipeline
 from huggingface_hub import InferenceClient
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
+
+LATENCY_BUCKETS = (0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120)
+REQUESTS = Counter("drawing_requests_total", "Completed guess requests.", ["requested_mode", "outcome"])
+REQUEST_DURATION = Histogram("drawing_request_duration_seconds", "Handler time including fallback and local lock waiting.", ["requested_mode"], buckets=LATENCY_BUCKETS)
+ATTEMPTS = Counter("drawing_inference_attempts_total", "Inference attempts by backend and outcome.", ["backend", "outcome"])
+INFERENCE_DURATION = Histogram("drawing_inference_duration_seconds", "Inference time excluding local lock waiting.", ["backend"], buckets=LATENCY_BUCKETS)
+FALLBACKS = Counter("drawing_fallbacks_total", "Automatic API to local transitions.", ["reason"])
+IN_PROGRESS = Gauge("drawing_requests_in_progress", "Requests executing inside the handler.", ["requested_mode"])
+MODEL_READY = Gauge("drawing_local_model_ready", "Whether the local pipeline initialized successfully.")
+FEEDBACK = Counter("drawing_feedback_total", "User-reported feedback events, not benchmark accuracy.", ["backend", "verdict"])
+
+# Export zero-valued series before the first request.
+for mode in ("api", "local"):
+    for outcome in ("success", "error", "invalid_input"):
+        REQUESTS.labels(mode, outcome)
+    REQUEST_DURATION.labels(mode)
+    IN_PROGRESS.labels(mode)
+    for outcome in ("success", "error"):
+        ATTEMPTS.labels(mode, outcome)
+    INFERENCE_DURATION.labels(mode)
+    for verdict in ("correct", "incorrect"):
+        FEEDBACK.labels(mode, verdict)
+for reason in ("timeout", "quota", "empty_response", "other"):
+    FALLBACKS.labels(reason)
+
+
+@contextmanager
+def inference_attempt(backend):
+    started = time.perf_counter()
+    outcome = "error"
+    try:
+        yield
+        outcome = "success"
+    finally:
+        ATTEMPTS.labels(backend, outcome).inc()
+        INFERENCE_DURATION.labels(backend).observe(time.perf_counter() - started)
+
+
+def monitor_request(function):
+    @wraps(function)
+    def measured(sketch, use_local_model=False, incorrect_guesses=None, return_metrics=False):
+        mode = "local" if use_local_model else "api"
+        started = time.perf_counter()
+        outcome = "error"
+        IN_PROGRESS.labels(mode).inc()
+        try:
+            result = function(sketch, use_local_model, incorrect_guesses, return_metrics)
+            guess = result[0] if isinstance(result, tuple) else result
+            outcome = "invalid_input" if guess == "Sketchpad is empty" else "error" if is_error_response(guess) else "success"
+            return result
+        finally:
+            REQUESTS.labels(mode, outcome).inc()
+            REQUEST_DURATION.labels(mode).observe(time.perf_counter() - started)
+            IN_PROGRESS.labels(mode).dec()
+    return measured
+
+
+def fallback_category(exc):
+    # HTTP 429 can also mean rate limiting; do not assume it means quota exhaustion.
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status == 402:
+        return "quota"
+    if isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.lower():
+        return "timeout"
+    return "other"
+
+
+class EmptyRemoteResponse(RuntimeError):
+    pass
 
 REMOTE_MODEL = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 LOCAL_MODEL = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
@@ -54,24 +126,27 @@ except Exception as exc:
     model_load_error = f"{type(exc).__name__}: {exc}"
     logging.exception("Failed to load local model %s", LOCAL_MODEL)
 
+MODEL_READY.set(1 if pipe is not None else 0)
+
 def local_generate(messages):
     try:
-        if pipe is None:
-            raise RuntimeError(f"Local model is not loaded. {model_load_error}")
-        t0 = time.perf_counter()
         # Multiple browser sessions must not run model inference concurrently.
         with local_model_lock:
-            outputs = pipe(
-                text=messages,
-                generate_kwargs={"max_new_tokens": MAX_NEW_TOKENS, "do_sample": False},
-            )
-        latency_ms = (time.perf_counter() - t0) * 1000
-        if not outputs:
-            raise RuntimeError("Model returned no generated messages.")
-        generated_text = outputs[0]["generated_text"][-1]["content"].strip()
-        if not generated_text:
-            raise RuntimeError("Model returned a blank answer.")
-        out_tokens = len(pipe.tokenizer.encode(generated_text, add_special_tokens=False))
+            with inference_attempt("local"):
+                if pipe is None:
+                    raise RuntimeError(f"Local model is not loaded. {model_load_error}")
+                t0 = time.perf_counter()
+                outputs = pipe(
+                    text=messages,
+                    generate_kwargs={"max_new_tokens": MAX_NEW_TOKENS, "do_sample": False},
+                )
+                latency_ms = (time.perf_counter() - t0) * 1000
+                if not outputs:
+                    raise RuntimeError("Model returned no generated messages.")
+                generated_text = outputs[0]["generated_text"][-1]["content"].strip()
+                if not generated_text:
+                    raise RuntimeError("Model returned a blank answer.")
+                out_tokens = len(pipe.tokenizer.encode(generated_text, add_special_tokens=False))
         # The pipeline does not expose its image/prompt token count.
         return generated_text, format_metrics_markdown(latency_ms, out_tokens=out_tokens)
     except Exception as exc:
@@ -131,8 +206,16 @@ def _drawing_info(sketch, last_hash):
     return img, cur_hash, cur_hash != last_hash
 
 def _feedback(guess, metrics_md, visible, history, hist_md, last_drawing, img):
-    return (guess, metrics_md, gr.update(visible=visible), history, hist_md, last_drawing, img)
+    backend = None
+    if not is_error_response(guess):
+        if metrics_md.startswith("**Model:** Remote"):
+            backend = "api"
+        elif metrics_md.startswith("**Model:** Local"):
+            backend = "local"
+    # This state belongs to the browser session, never a process-global last backend.
+    return (guess, metrics_md, gr.update(visible=visible), history, hist_md, last_drawing, img, backend)
 
+@monitor_request
 def process_drawing(
     sketch,
     use_local_model=False,
@@ -184,29 +267,32 @@ def process_drawing(
     ]
     append_incorrect_guesses(messages, base_prompt, incorrect_guesses)
     try:
-        client = InferenceClient(token=token, model=REMOTE_MODEL, timeout=REMOTE_TIMEOUT_SECONDS)
-        t0 = time.perf_counter()
-        response = client.chat.completions.create(
-            model=REMOTE_MODEL,
-            messages=messages,
-            max_tokens=MAX_NEW_TOKENS,
-        )
-        latency_ms = (time.perf_counter() - t0) * 1000
-        content = response.choices[0].message.content
-        if not content or not content.strip():
-            return run_local("Remote model returned an empty response")
-        guess = content.strip()
-        usage = response.usage
-        metrics_md = format_metrics_markdown(
-            latency_ms,
-            usage.prompt_tokens if usage is not None else None,
-            usage.completion_tokens if usage is not None else None,
-        )
-        metrics_md = f"**Model:** Remote (`{REMOTE_MODEL}`)\n\n{metrics_md}"
-        return (guess, metrics_md) if return_metrics else guess
+        with inference_attempt("api"):
+            client = InferenceClient(token=token, model=REMOTE_MODEL, timeout=REMOTE_TIMEOUT_SECONDS)
+            t0 = time.perf_counter()
+            response = client.chat.completions.create(
+                model=REMOTE_MODEL,
+                messages=messages,
+                max_tokens=MAX_NEW_TOKENS,
+            )
+            latency_ms = (time.perf_counter() - t0) * 1000
+            content = response.choices[0].message.content
+            if not content or not content.strip():
+                raise EmptyRemoteResponse("Remote model returned an empty response")
+            guess = content.strip()
+            usage = getattr(response, "usage", None)
+            metrics_md = format_metrics_markdown(
+                latency_ms,
+                usage.prompt_tokens if usage is not None else None,
+                usage.completion_tokens if usage is not None else None,
+            )
+            metrics_md = f"**Model:** Remote (`{REMOTE_MODEL}`)\n\n{metrics_md}"
+            return (guess, metrics_md) if return_metrics else guess
     except Exception as exc:
+        category = "empty_response" if isinstance(exc, EmptyRemoteResponse) else fallback_category(exc)
+        FALLBACKS.labels(category).inc()
         status = getattr(getattr(exc, "response", None), "status_code", None)
-        reason = f"Remote API HTTP {status}" if isinstance(status, int) else "Remote API unavailable or timed out"
+        reason = str(exc) if isinstance(exc, EmptyRemoteResponse) else f"Remote API HTTP {status}" if isinstance(status, int) else "Remote API unavailable or timed out"
         return run_local(reason)
 
 def format_history_markdown(history, correct=False):
@@ -224,6 +310,7 @@ def format_history_markdown(history, correct=False):
 def make_initial_guess(sketch, use_local_model, history=None, last_drawing=None):
     img, current_hash, drawing_changed = _drawing_info(sketch, last_drawing)
     if img is None:
+        process_drawing(None, use_local_model)
         return _feedback("Sketchpad is empty", "", False, [], "", None, None)
 
     history_to_use = [] if drawing_changed else (history or [])
@@ -241,10 +328,12 @@ def make_initial_guess(sketch, use_local_model, history=None, last_drawing=None)
     new_history = history_to_use + [guess]
     return _feedback(guess, metrics_md, True, new_history, format_history_markdown(new_history, correct=False), current_hash, img)
 
-def handle_correct(history):
-    return (gr.update(visible=False), history, format_history_markdown(history, correct=True))
+def handle_correct(history, feedback_backend=None):
+    if history and feedback_backend in ("api", "local"):
+        FEEDBACK.labels(feedback_backend, "correct").inc()
+    return (gr.update(visible=False), history, format_history_markdown(history, correct=True), None)
 
-def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None, cached_image=None):
+def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None, cached_image=None, feedback_backend=None):
     if cached_image is not None and last_drawing is not None:
         img = cached_image
         current_hash = last_drawing
@@ -252,11 +341,15 @@ def handle_incorrect(sketch, use_local_model, history=None, last_drawing=None, c
     else:
         img, current_hash, drawing_changed = _drawing_info(sketch, last_drawing)
         if img is None:
+            process_drawing(None, use_local_model)
             return _feedback("Sketchpad is empty", "", False, [], "", None, None)
 
     history_to_use = [] if drawing_changed else (history or [])
     if not drawing_changed and not history_to_use:
         return _feedback("", "", False, [], "", current_hash, img)
+
+    if not drawing_changed and history_to_use and feedback_backend in ("api", "local"):
+        FEEDBACK.labels(feedback_backend, "incorrect").inc()
 
     new_guess, metrics_md = process_drawing(
         img,
@@ -314,8 +407,9 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
             history_state = gr.State([])
             last_drawing_state = gr.State(None)
             cached_image_state = gr.State(None)
+            feedback_backend_state = gr.State(None)
 
-    feedback_outputs = [guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state, cached_image_state]
+    feedback_outputs = [guess_output, metrics_output, feedback_group, history_state, history_output, last_drawing_state, cached_image_state, feedback_backend_state]
 
     guess_btn.click(
         fn=make_initial_guess,
@@ -325,13 +419,13 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
 
     correct_btn.click(
         fn=handle_correct,
-        inputs=[history_state],
-        outputs=[feedback_group, history_state, history_output],
+        inputs=[history_state, feedback_backend_state],
+        outputs=[feedback_group, history_state, history_output, feedback_backend_state],
     )
 
     incorrect_btn.click(
         fn=handle_incorrect,
-        inputs=[sketchpad, use_local_model, history_state, last_drawing_state, cached_image_state],
+        inputs=[sketchpad, use_local_model, history_state, last_drawing_state, cached_image_state, feedback_backend_state],
         outputs=feedback_outputs,
     )
 
@@ -355,4 +449,5 @@ with gr.Blocks(title="VLM Guess the Drawing") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(server_port=int(os.environ.get("GRADIO_SERVER_PORT", "8013")))
+    start_http_server(8000, addr="0.0.0.0")
+    demo.launch(server_port=int(os.environ.get("GRADIO_SERVER_PORT", "7860")))

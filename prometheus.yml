@@ -1,0 +1,12 @@
+global:
+  scrape_interval: 15s
+  scrape_timeout: 5s
+
+scrape_configs:
+  - job_name: drawing_app
+    static_configs:
+      - targets: ["group13-drawing-game:8000"]
+
+  - job_name: drawing_node
+    static_configs:
+      - targets: ["group13-drawing-game:9100"]

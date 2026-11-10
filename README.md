@@ -1,94 +1,77 @@
----
-title: Case Study 1
-emoji: 🐠
-colorFrom: pink
-colorTo: pink
-sdk: gradio
-sdk_version: 6.26.0
-python_version: '3.12'
-app_file: app.py
-pinned: false
-short_description: Interface where an LLM guesses your drawing
----
+# Case Study 3: Drawing Game Deployment and Monitoring
 
-## Running in the CS2 remote container
+This branch extends `Case-Study-2` with Docker deployment, application metrics,
+node exporter, Prometheus, Grafana, and one public ngrok entry point.
+The Gradio drawing game retains both remote API and local CPU inference,
+including automatic local fallback when remote inference fails.
 
-From the local checkout, run `bash CS2/connect.sh` and keep the SSH session
-open. The script forwards local port 8013 to port 8013 in the container. In that session:
+## Deployment layout
 
-```bash
-cd ~/Case-Study-1
-source venv/bin/activate
-python -m pip install -r requirements.txt
-# Set HF_TOKEN in .env beside app.py, or export it in this shell.
-# An existing environment variable takes precedence over .env.
-python app.py
-```
+All four containers join the `group13-monitoring` Docker network:
 
-`deploy.sh` creates a private `tmp/.env` with only `HF_TOKEN` and copies it
-to `~/Case-Study-1/.env` on the VM. The application code comes from the
-`Case-Study-2` branch on GitHub.
+| Container | Role | VM loopback mapping |
+|---|---|---|
+| group13-drawing-game | Gradio, Python metrics, node exporter | 13000:7860, 13002:8000, 13004:9100 |
+| group13-prometheus | Metrics collection and storage | 13006:9090 |
+| group13-grafana | Dashboard | 13007:3000 |
+| group13-proxy | Nginx public path routing | 13001:80 |
 
-Open http://localhost:8013 on your own computer. Gradio defaults to port 8013
-(overridable with `GRADIO_SERVER_PORT`). Hosted inference requires an HF_TOKEN
-with provider access and sufficient quota. Missing or blank HF_TOKEN stops
-startup with an error, including when local inference is desired. Local fallback
-is used only for API failures or empty responses when a token is configured.
+The public product is at
+https://haggler-eatery-autopilot.ngrok-free.dev/ and Grafana is at
+https://haggler-eatery-autopilot.ngrok-free.dev/grafana/ while the tunnel is online.
+Grafana requires its configured login. See [REVERSE_PROXY.md](REVERSE_PROXY.md)
+for routing details and required Grafana subpath settings.
 
-### Local CPU model
+## Image and runtime
 
-The local model is `HuggingFaceTB/SmolVLM2-500M-Video-Instruct`. It runs on
-CPU in float32 with SDPA attention; CUDA, FlashAttention, and Hugging Face
-Spaces are not required. `num2words` is required by its processor. The first
-startup downloads the model to the Hugging Face cache.
+Build with `docker build -t group13/drawing-game:cs3-node .`.
+The Dockerfile installs CPU inference dependencies and the
+`prometheus-node-exporter` apt package. `start.sh` runs the app and exporter
+as the non-root app user and shuts down both when either exits.
 
-For the two-core, 4 GiB CS2 container, the app limits PyTorch to two threads
-and serializes local inference. Both local and remote generation use
-`MAX_NEW_TOKENS = 64` (a maximum, not a required response length).
+Supply `HF_TOKEN` at runtime, not during image building. The existing app
+requires a nonempty token even in local mode. The local model is
+`HuggingFaceTB/SmolVLM2-500M-Video-Instruct`; remote requests use
+`Qwen/Qwen3-VL-235B-A22B-Instruct`. Initial startup downloads local model
+weights; persist them using `group13-hf-cache` mounted at
+`/home/app/.cache/huggingface`. The deployed product uses two CPUs and 4 GiB RAM.
 
-Drawings are passed as PIL images without lossy encoding. Local image
-splitting is explicitly disabled: the processor resizes the complete drawing
-to one model-sized image. The remote API receives one complete PNG; its
-internal preprocessing is managed by the inference provider.
+## Monitoring configuration
 
-Remote token counts come from API usage. Local output tokens are counted
-from the returned text; local input tokens show `N/A` because the pipeline
-does not report the combined image and prompt count.
+- `prometheus.yml`: application and node scrape jobs every 15 seconds.
+- `grafana-datasource.yml`: Prometheus data source provisioning.
+- `group13-dashboard.json`: importable dashboard for the provisioned data source.
+- `nginx.conf`: product at `/`, Grafana at `/grafana/`, streaming and WebSockets.
+- `ngrok-tunnels.yml`: one HTTPS tunnel to proxy port 13001; credentials live
+  separately in the account's ngrok configuration and must not be committed.
+- `collect-evidence.sh`: exports a metrics snapshot and 30 minutes of series.
 
-A CPU stress test forcing all 64 output tokens with splitting disabled used
-about 2.57 GiB peak process RSS and took 7.1 seconds. Ordinary short object-name
-responses can finish sooner. These synthetic-drawing tests are not a general
-accuracy benchmark or a guarantee for arbitrarily long conversation histories.
+Eight custom application metric families cover completed requests, request
+latency, backend attempts, inference latency, fallback reasons, active requests,
+local-model readiness, and user feedback. Successful API-selected requests can
+be served by local fallback; inspect backend attempt and fallback metrics before
+claiming remote inference success. Feedback is user-reported, not benchmark accuracy.
+Node CPU/memory measurements describe the shared VM, not container limits.
+Process metrics describe the Python application process.
 
-The sketchpad, incorrect-guess history, remote model, and automatic fallback
-are retained. Startup model-loading errors are logged and shown when local
-inference is requested, so remote inference can still be used.
+## Offline verification
 
-Run the real-model application smoke test (downloads weights if uncached):
+Install the CI test dependencies (ML weights are not needed):
 
 ```bash
-python tests/smoke_local_model.py
-```
-
-Run unit tests without downloading a model:
-
-```bash
+python -m pip install pytest 'gradio>=6.26,<7' pillow huggingface_hub python-dotenv 'prometheus-client>=0.21,<1'
 python -m pytest -m "not e2e" -q
+python -m unittest discover -s . -p test_metrics.py -v
 ```
 
-Unit tests mock the ML runtimes and inference API. Their test credential is
-scoped to the unit-test fixtures and is never used by live endpoint tests.
-The CI job installs only the dependencies needed for these offline tests.
+The metric tests simulate inference and check request/fallback accounting,
+feedback attribution, timing boundaries, and HTTP exposition. Existing unit
+tests also mock ML runtimes. Run these suites in separate processes to keep
+metric registries isolated. Live Gradio checks remain opt-in through
+`GRADIO_TEST_URL` and `pytest -m e2e`; they are not run by the offline commands.
 
-Test the running container's Gradio endpoint from inside the container:
-
-```bash
-GRADIO_TEST_URL=http://127.0.0.1:8013 python -m pytest -m e2e -q
-```
-
-`GRADIO_TEST_URL` also accepts a Hugging Face Space ID for hosted checks.
-These live tests exercise empty sketch submission and local CPU inference
-through the API. Without `GRADIO_TEST_URL` they skip; a configured endpoint
-that is unavailable fails the tests. The real-model smoke test above also
-checks recognition, fallback during a simulated API outage, and guess-again
-history without making paid inference requests.
+Do not commit `.env`, account credentials, raw evidence, runtime databases,
+model caches, or downloaded binaries. Persistent volumes hold model downloads,
+Prometheus history, and Grafana accounts/dashboards. Container restart policies
+are configured on the deployed VM; the background ngrok process survives SSH
+logout but is not configured to restart automatically after a VM reboot.
